@@ -1,0 +1,21 @@
+# Node.js / Frontend
+node_modules/
+dist/
+.npm
+*.log
+.eslintcache
+.stylelintcache
+tsconfig.tsbuildinfo
+.DS_Store
+Thumbs.db
+
+# Rust / Tauri
+src-tauri/target/
+
+# Sensitive Certificates and Keys
+*.p12
+*.pem
+*.key
+
+# Application Database File (User-requested)
+db.json

@@ -1,0 +1,47 @@
+{
+  "page_samples": [
+    "Mediapark - Интернет-магазин бытовой техники и электроники в Узбекистане: https://mediapark.uz/ => 136613",
+    "Медиапарк каталог - товары на любой случай: https://mediapark.uz/category => 35343",
+    "Корзина | MEDIAPARK - ваш выбор всегда под рукой: https://mediapark.uz/basket => 26548",
+    "Купить Смартфоны в Ташкенте недорого - каталог и цены ⚡: https://mediapark.uz/products/category/telefony-17/smartfony-40 => 13716",
+    "Mediapark - maishiy texnika va elektronika buyumlari internet-magazini: https://mediapark.uz/uz => 11500",
+    "📱 Смартфоны, телефоны, планшеты и гаджеты: https://mediapark.uz/products/category/smartfony-telefony-planshety-i-gadzhety-16 => 10695",
+    "orders: https://mediapark.uz/profile/orders => 9540",
+    "Купить Смартфоны iPhone в Ташкенте недорого - каталог и цены ⚡: https://mediapark.uz/products/category/smartfony-po-brendu-660/smartfony-apple-iphone-211 => 9134",
+    "checkout: https://mediapark.uz/checkout => 8448",
+    "profile: https://mediapark.uz/profile => 7236",
+    "🏠 Крупная и мелкая бытовая техника для дома: https://mediapark.uz/products/category/tehnika-dlya-doma-31 => 6939",
+    "🍳 Крупная и мелкая бытовая техника для кухни: https://mediapark.uz/products/category/tehnika-dlya-kuhni-35 => 6657",
+    "Беспроводное зарядное устройство Apple MagSafe Charger (2 m) в Ташкенте | цены и отзывы ⚡: https://mediapark.uz/products/view/besprovodnoe-zaryadnoe-ustroystvo-apple-magsafe-charger-2-m-32874 => 6130",
+    "Телефоны в Ташкенте недорого ⚡: https://mediapark.uz/products/category/telefony-17 => 4170",
+    "📺 Телевизоры, проекторы, аудио-видео и фото техника: https://mediapark.uz/products/category/televizory-audio-i-video-1 => 3722",
+    "💻 Ноутбуки, комплектующие, моноблоки и игровые приставки: https://mediapark.uz/products/category/noutbuki-monobloki-igrovye-pristavki-20 => 3500",
+    "Mediapark katalogi - har qanday vaziyat uchun tovarlar: https://mediapark.uz/uz/category => 3223",
+    "Наши магазины | MEDIAPARK - адреса, контакты и расписание работы: https://mediapark.uz/ourshops => 3188",
+    "Savatcha | MEDIAPARK - xaridlaringizni bepul yetkazib berish bilan: https://mediapark.uz/uz/basket => 3121",
+    "Избранное | MEDIAPARK - Магазин электроники с бесплатной доставкой: https://mediapark.uz/chosen => 3111"
+  ],
+  "interactions": [
+    "baskets: 27079",
+    "likes: 2030",
+    "compares: 1713",
+    "page_views: 3088684"
+  ],
+  "page_types": [
+    "Some(\"product_view\"): 1070256",
+    "Some(\"product_category\"): 1061287",
+    "None: 529173",
+    "Some(\"home\"): 154361",
+    "Some(\"search\"): 121348",
+    "Some(\"categories_index\"): 35388",
+    "Some(\"discount_details\"): 24398",
+    "Some(\"basket\"): 23071",
+    "Some(\"my_orders\"): 11634",
+    "Some(\"checkout\"): 9738",
+    "Some(\"brand_view\"): 8945",
+    "Some(\"profile_dashboard\"): 6789",
+    "Some(\"fortuna\"): 4455",
+    "Some(\"order_details\"): 4056",
+    "Some(\"our_shops_list\"): 4051"
+  ]
+}
