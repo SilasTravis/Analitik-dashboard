@@ -89,3 +89,16 @@ keep them in sync.
 | `npm run build`       | Type-check + Vite production build    |
 | `npm run tauri:build` | Bundle `.app` / `.dmg`                |
 | `npm run typecheck`   | TypeScript check, no emit             |
+
+## Troubleshooting (macOS "App is damaged" error)
+
+If you download the `.dmg` directly from GitHub releases without Apple Developer signature notarization active, macOS Gatekeeper may show an error: `"Analitic Dashboard" is damaged and can't be opened.`
+
+To run the application:
+1. Open the `.dmg` and drag **Analitic Dashboard.app** into your **Applications** folder.
+2. Open your terminal and run the following command:
+   ```bash
+   xattr -cr "/Applications/Analitic Dashboard.app"
+   ```
+3. Open the app normally. It will launch successfully.
+
