@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Analitic Dashboard",
+  "version": "0.1.0",
+  "identifier": "com.analiticdashboard.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Analitic Dashboard",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Transparent",
+        "hiddenTitle": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "",
+    "shortDescription": "Analytics dashboard",
+    "longDescription": "Desktop analytics dashboard powered by Tauri + React"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI1OTY4OTk1QzYzRkZEQjIKUldTeS9UL0dsWW1XSlZJSjJkK1ZHRVc1TDB6SnJxSmM5NFUzL1JiWjVxcG90WlVYNWRyME5IRHYK",
+      "endpoints": [
+        "https://raw.githubusercontent.com/SilasTravis/Analitik-dashboard/main/updater.json"
+      ]
+    }
+  }
+}
