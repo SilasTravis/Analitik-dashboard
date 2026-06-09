@@ -47,7 +47,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI1OTY4OTk1QzYzRkZEQjIKUldTeS9UL0dsWW1XSlZJSjJkK1ZHRVc1TDB6SnJxSmM5NFUzL1JiWjVxcG90WlVYNWRyME5IRHYK",
       "endpoints": [
-        "https://raw.githubusercontent.com/SilasTravis/Analitik-dashboard/main/updater.json"
+        "https://github.com/SilasTravis/Analitik-dashboard/releases/latest/download/latest.json"
       ]
     }
   }
