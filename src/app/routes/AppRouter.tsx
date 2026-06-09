@@ -5,6 +5,7 @@ import { DashboardPage } from "@pages/dashboard";
 import { ComparePage } from "@pages/compare";
 import { CampaignsPage } from "@pages/campaigns";
 import { UserFlowPage } from "@pages/user-flow";
+import { PerformancePage } from "@pages/performance";
 import { SettingsPage } from "@pages/settings";
 import { RequireAuth } from "./RequireAuth";
 // Force Vite HMR resolution
@@ -51,6 +52,14 @@ export function AppRouter() {
           element={
             <RequireAuth>
               <UserFlowPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path={ROUTES.performance}
+          element={
+            <RequireAuth>
+              <PerformancePage />
             </RequireAuth>
           }
         />

@@ -16,6 +16,11 @@ export type {
   FlowLink,
   PageFlowReport,
   PageEngagementRow,
+  PerformanceOverview,
+  PerformanceTrendPoint,
+  PagePerformanceRow,
+  DeviceFilter,
+  PerfArgs,
 } from "./model/types";
 export { analyticsKeys } from "./model/query-keys";
 export { analyticsApi } from "./api/analytics.api";

@@ -4,6 +4,7 @@ export const ROUTES = {
   compare: "/compare",
   campaigns: "/campaigns",
   userFlow: "/user-flow",
+  performance: "/performance",
   settings: "/settings",
 } as const;
 

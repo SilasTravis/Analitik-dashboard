@@ -103,3 +103,38 @@ export type PageEngagementRow = {
   avg_scroll_depth: number;
   avg_click_count: number;
 };
+
+export type DeviceFilter = "all" | "mobile" | "desktop";
+
+export type PerfArgs = RangeArgs & {
+  device: DeviceFilter;
+};
+
+export type PerformanceOverview = {
+  total_views: number;
+  measured_views: number;
+  ttfb_p75: number | null;
+  fcp_p75: number | null;
+  lcp_p75: number | null;
+  cls_p75: number | null;
+  fid_p75: number | null;
+  dom_complete_p75: number | null;
+  full_load_p75: number | null;
+};
+
+export type PerformanceTrendPoint = {
+  date: string;
+  lcp_p75: number | null;
+  fcp_p75: number | null;
+  full_load_p75: number | null;
+};
+
+export type PagePerformanceRow = {
+  page_type: string;
+  views_count: number;
+  measured_views: number;
+  lcp_p75: number | null;
+  cls_p75: number | null;
+  fid_p75: number | null;
+  full_load_p75: number | null;
+};

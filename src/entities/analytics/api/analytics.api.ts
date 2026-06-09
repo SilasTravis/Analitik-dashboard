@@ -16,6 +16,10 @@ import type {
   UtmRow,
   PageFlowReport,
   PageEngagementRow,
+  PerformanceOverview,
+  PerformanceTrendPoint,
+  PagePerformanceRow,
+  PerfArgs,
 } from "../model/types";
 
 export const analyticsApi = {
@@ -47,4 +51,10 @@ export const analyticsApi = {
     invoke<PageFlowReport>("get_page_flow_map", { args }),
   getPageEngagementReport: (args: RangeArgs) =>
     invoke<PageEngagementRow[]>("get_page_engagement_report", { args }),
+  getPerformanceOverview: (args: PerfArgs) =>
+    invoke<PerformanceOverview>("get_performance_overview", { args }),
+  getPerformanceTrend: (args: PerfArgs) =>
+    invoke<PerformanceTrendPoint[]>("get_performance_trend", { args }),
+  getPagePerformance: (args: PerfArgs) =>
+    invoke<PagePerformanceRow[]>("get_page_performance", { args }),
 };

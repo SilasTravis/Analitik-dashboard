@@ -1,4 +1,4 @@
-import type { ComparisonArgs, RangeArgs } from "./types";
+import type { ComparisonArgs, PerfArgs, RangeArgs } from "./types";
 
 export const analyticsKeys = {
   all: ["analytics"] as const,
@@ -17,4 +17,7 @@ export const analyticsKeys = {
   referrers: (r: RangeArgs) => ["analytics", "referrers", r.from, r.to] as const,
   flowMap: (r: RangeArgs) => ["analytics", "flow-map", r.from, r.to] as const,
   flowEngagement: (r: RangeArgs) => ["analytics", "flow-engagement", r.from, r.to] as const,
+  perfOverview: (a: PerfArgs) => ["analytics", "perf-overview", a.from, a.to, a.device] as const,
+  perfTrend: (a: PerfArgs) => ["analytics", "perf-trend", a.from, a.to, a.device] as const,
+  pagePerf: (a: PerfArgs) => ["analytics", "page-perf", a.from, a.to, a.device] as const,
 };
