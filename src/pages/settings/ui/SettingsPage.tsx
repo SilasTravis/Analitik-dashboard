@@ -10,6 +10,8 @@ import {
   Stack,
   LinearProgress,
   Alert,
+  IconButton,
+  Tooltip,
 } from "@mui/material";
 import { Sidebar } from "@widgets/sidebar";
 import { Header } from "@widgets/header";
@@ -20,11 +22,24 @@ import CloudQueueIcon from "@mui/icons-material/CloudQueue";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import InfoIcon from "@mui/icons-material/Info";
+import VisibilityIcon from "@mui/icons-material/Visibility";
+import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 
 export function SettingsPage() {
   const session = useSessionStore((s) => s.session);
   const { state: updaterState, checkForUpdate, installUpdate } = useUpdater();
   const [currentVersion, setCurrentVersion] = useState("0.1.0");
+  // Database connection values are obscured by default; toggled via the eye icon.
+  const [showCreds, setShowCreds] = useState(false);
+
+  // Applied to each credential value so it blurs/reveals smoothly. While
+  // blurred, text selection is disabled so values can't be copied/leaked.
+  const credValueSx = {
+    fontWeight: 600,
+    transition: "filter 0.2s ease",
+    filter: showCreds ? "none" : "blur(6px)",
+    userSelect: showCreds ? "text" : "none",
+  } as const;
 
   useEffect(() => {
     // Dynamically retrieve the current app version from the Tauri core process
@@ -248,34 +263,47 @@ export function SettingsPage() {
             {/* Connection Information Panel */}
             <Card sx={{ flexShrink: 0 }}>
               <CardContent sx={{ p: 3 }}>
-                <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 2 }}>
-                  <SecurityIcon color="primary" />
-                  <Typography variant="h6" fontWeight={700}>
-                    Database Connection Details
-                  </Typography>
+                <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+                  <Stack direction="row" alignItems="center" spacing={1.5}>
+                    <SecurityIcon color="primary" />
+                    <Typography variant="h6" fontWeight={700}>
+                      Database Connection Details
+                    </Typography>
+                  </Stack>
+                  {creds && (
+                    <Tooltip title={showCreds ? "Hide values" : "Show values"}>
+                      <IconButton
+                        size="small"
+                        onClick={() => setShowCreds((v) => !v)}
+                        aria-label={showCreds ? "Hide connection values" : "Show connection values"}
+                      >
+                        {showCreds ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                      </IconButton>
+                    </Tooltip>
+                  )}
                 </Stack>
                 <Divider sx={{ mb: 2 }} />
                 {creds ? (
                   <Stack spacing={1.5} sx={{ mt: 1 }}>
                     <Stack direction="row" justifyContent="space-between">
                       <Typography variant="body2" color="text.secondary">Database Host</Typography>
-                      <Typography variant="body2" fontWeight={600}>{creds.host}</Typography>
+                      <Typography variant="body2" sx={credValueSx}>{creds.host}</Typography>
                     </Stack>
                     <Stack direction="row" justifyContent="space-between">
                       <Typography variant="body2" color="text.secondary">Port</Typography>
-                      <Typography variant="body2" fontWeight={600}>{creds.port}</Typography>
+                      <Typography variant="body2" sx={credValueSx}>{creds.port}</Typography>
                     </Stack>
                     <Stack direction="row" justifyContent="space-between">
                       <Typography variant="body2" color="text.secondary">Database Name</Typography>
-                      <Typography variant="body2" fontWeight={600}>{creds.database}</Typography>
+                      <Typography variant="body2" sx={credValueSx}>{creds.database}</Typography>
                     </Stack>
                     <Stack direction="row" justifyContent="space-between">
                       <Typography variant="body2" color="text.secondary">Username</Typography>
-                      <Typography variant="body2" fontWeight={600}>{creds.user}</Typography>
+                      <Typography variant="body2" sx={credValueSx}>{creds.user}</Typography>
                     </Stack>
                     <Stack direction="row" justifyContent="space-between">
                       <Typography variant="body2" color="text.secondary">SSL Enabled</Typography>
-                      <Typography variant="body2" fontWeight={600} color={creds.ssl ? "success.main" : "text.secondary"}>
+                      <Typography variant="body2" sx={credValueSx} color={creds.ssl ? "success.main" : "text.secondary"}>
                         {creds.ssl ? "Yes" : "No"}
                       </Typography>
                     </Stack>
