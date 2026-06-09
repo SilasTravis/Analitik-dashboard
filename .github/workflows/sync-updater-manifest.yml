@@ -1,0 +1,59 @@
+name: Sync updater manifest
+
+# Keeps the legacy `updater.json` on `main` in sync with each published
+# release's `latest.json`.
+#
+# Why this exists: the updater endpoint is baked into every binary at build
+# time. Builds from v0.2.0 and earlier embed the old endpoint
+# (raw.githubusercontent.com/.../main/updater.json), so they only learn about
+# new versions if that file is kept current. Builds from v0.2.1+ embed the new
+# endpoint (releases/latest/download/latest.json) and don't need this — but
+# syncing is harmless and bridges every existing install forward.
+#
+# Fires when a release is *published* (i.e. you publish the draft that the
+# Release workflow created), so it reflects exactly what users can download.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-updater-manifest
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # Skip pre-releases; the old endpoint should only track stable versions.
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download latest.json from the published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json \
+            --clobber
+          mv -f latest.json updater.json
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- updater.json; then
+            echo "updater.json already matches ${{ github.event.release.tag_name }}; nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add updater.json
+          git commit -m "ci: sync updater.json to ${{ github.event.release.tag_name }}"
+          git push origin main
