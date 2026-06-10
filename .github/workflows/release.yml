@@ -42,6 +42,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Decrypt bundled DB schema
+        run: node scripts/db-schema-crypt.mjs decrypt
+        env:
+          DB_JSON_KEY: ${{ secrets.DB_JSON_KEY }}
+
       - name: Build frontend and Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
