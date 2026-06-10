@@ -6,9 +6,12 @@ use tokio_postgres::Client;
 use crate::db::error::AppResult;
 
 /// The full database schema, captured offline as `db.json` at the repo root and
-/// baked into the binary. It is authoritative (includes every table, primary
-/// key, and foreign key) and always available, even before a DB query runs.
-const DB_JSON: &str = include_str!("../../../db.json");
+/// baked into the binary by `build.rs`. It is authoritative (includes every
+/// table, primary key, and foreign key) and always available, even before a DB
+/// query runs. `db.json` is private/gitignored, so when it's absent at build
+/// time (e.g. CI) this is an empty string and the app falls back to live
+/// introspection (see `build`).
+const DB_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/db_schema.json"));
 
 /// Build the model-facing schema text. Prefer the bundled `db.json` (complete,
 /// with relationships); fall back to live introspection if it can't be parsed.
@@ -24,6 +27,10 @@ pub async fn build(client: &Client) -> AppResult<String> {
 /// One line per table/view. `[pk]` marks primary keys; `-> table.col` marks
 /// foreign keys, so the model knows exactly how to join.
 pub fn bundled() -> AppResult<String> {
+    // Absent at build time (db.json is private/gitignored) → no bundled schema.
+    if DB_JSON.trim().is_empty() {
+        return Ok(String::new());
+    }
     let root: Value = serde_json::from_str(DB_JSON)?;
     // db.json is `[{ "database_schema": "<json-encoded array of tables>" }]`.
     let raw = root
