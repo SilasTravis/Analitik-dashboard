@@ -5,6 +5,7 @@ export const ROUTES = {
   campaigns: "/campaigns",
   userFlow: "/user-flow",
   performance: "/performance",
+  aiScanner: "/ai-scanner",
   settings: "/settings",
 } as const;
 

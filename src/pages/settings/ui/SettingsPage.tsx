@@ -17,6 +17,7 @@ import { Sidebar } from "@widgets/sidebar";
 import { Header } from "@widgets/header";
 import { useSessionStore } from "@entities/session";
 import { useUpdater } from "@features/updater";
+import { AiSettingsCard } from "@features/ai-settings";
 import SecurityIcon from "@mui/icons-material/Security";
 import CloudQueueIcon from "@mui/icons-material/CloudQueue";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -259,6 +260,9 @@ export function SettingsPage() {
                 {renderUpdaterContent()}
               </CardContent>
             </Card>
+
+            {/* AI Assistant Panel */}
+            <AiSettingsCard />
 
             {/* Connection Information Panel */}
             <Card sx={{ flexShrink: 0 }}>

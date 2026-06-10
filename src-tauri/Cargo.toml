@@ -25,11 +25,13 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 postgres-native-tls = "0.5"
 native-tls = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
-keyring = "3"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 aes-gcm = "0.10"
 rand = "0.8"
 base64 = "0.22"
 directories = "5"
+reqwest = { version = "0.12", features = ["json"] }
+async-trait = "0.1"
 
 [features]
 default = ["custom-protocol"]

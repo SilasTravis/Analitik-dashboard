@@ -1,7 +1,9 @@
+mod ai;
 mod commands;
 mod db;
 mod security;
 
+use ai::AiState;
 use db::pool::ConnectionState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -10,6 +12,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(ConnectionState::default())
+        .manage(AiState::default())
         .invoke_handler(tauri::generate_handler![
             commands::auth::test_connection,
             commands::auth::save_credentials,
@@ -33,6 +36,12 @@ pub fn run() {
             commands::performance::get_performance_overview,
             commands::performance::get_performance_trend,
             commands::performance::get_page_performance,
+            commands::ai::ai_chat,
+            commands::ai::ai_reset_chat,
+            commands::ai::save_ai_settings,
+            commands::ai::load_ai_settings,
+            commands::ai::clear_ai_settings,
+            commands::ai::list_ai_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
