@@ -1,4 +1,4 @@
-import type { ComparisonArgs, PerfArgs, RangeArgs } from "./types";
+import type { ComparisonArgs, ConversionArgs, PerfArgs, RangeArgs } from "./types";
 
 export const analyticsKeys = {
   all: ["analytics"] as const,
@@ -20,4 +20,9 @@ export const analyticsKeys = {
   perfOverview: (a: PerfArgs) => ["analytics", "perf-overview", a.from, a.to, a.device] as const,
   perfTrend: (a: PerfArgs) => ["analytics", "perf-trend", a.from, a.to, a.device] as const,
   pagePerf: (a: PerfArgs) => ["analytics", "page-perf", a.from, a.to, a.device] as const,
+  orderStatuses: (r: RangeArgs) => ["analytics", "order-statuses", r.from, r.to] as const,
+  conversionKpis: (a: ConversionArgs) =>
+    ["analytics", "conversion-kpis", a.from, a.to, a.device, a.statuses.join(",")] as const,
+  conversionFunnel: (a: ConversionArgs) =>
+    ["analytics", "conversion-funnel", a.from, a.to, a.device, a.statuses.join(",")] as const,
 };

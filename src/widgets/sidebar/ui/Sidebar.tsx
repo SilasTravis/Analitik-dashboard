@@ -3,6 +3,7 @@ import InsightsIcon from "@mui/icons-material/Insights";
 import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
 import CampaignIcon from "@mui/icons-material/Campaign";
 import AltRouteIcon from "@mui/icons-material/AltRoute";
+import FilterAltIcon from "@mui/icons-material/FilterAlt";
 import SpeedIcon from "@mui/icons-material/Speed";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SettingsIcon from "@mui/icons-material/Settings";
@@ -14,6 +15,7 @@ const items = [
   { to: ROUTES.compare, label: "Comparison", icon: <CompareArrowsIcon fontSize="small" /> },
   { to: ROUTES.campaigns, label: "Campaigns", icon: <CampaignIcon fontSize="small" /> },
   { to: ROUTES.userFlow, label: "User Flow", icon: <AltRouteIcon fontSize="small" /> },
+  { to: ROUTES.conversion, label: "Conversion", icon: <FilterAltIcon fontSize="small" /> },
   { to: ROUTES.performance, label: "Performance", icon: <SpeedIcon fontSize="small" /> },
   { to: ROUTES.aiScanner, label: "AI Scanner", icon: <AutoAwesomeIcon fontSize="small" /> },
   { to: ROUTES.settings, label: "Settings", icon: <SettingsIcon fontSize="small" /> },

@@ -1,4 +1,4 @@
-import { Box, Chip, Stack, Typography } from "@mui/material";
+import { Avatar, Box, Chip, Stack, Tooltip, Typography } from "@mui/material";
 import type { ReactNode } from "react";
 import { useSessionStore } from "@entities/session";
 import { LogoutButton } from "@features/auth-logout";
@@ -15,7 +15,8 @@ type Props = {
 export function Header({ title, subtitle, actions }: Props) {
   const session = useSessionStore((s) => s.session);
   const reconnectError = useSessionStore((s) => s.reconnectError);
-  const label = session
+  const user = session?.credentials.user ?? "";
+  const connection = session
     ? `${session.credentials.user}@${session.credentials.host}/${session.credentials.database}`
     : "";
 
@@ -49,7 +50,21 @@ export function Header({ title, subtitle, actions }: Props) {
         <Stack direction="row" spacing={1.5} alignItems="center">
           {actions}
           <RefreshButton />
-          {label ? <Chip label={label} size="small" variant="outlined" /> : null}
+          {user ? (
+            <Tooltip title={connection} arrow>
+              <Chip
+                avatar={
+                  <Avatar sx={{ textTransform: "uppercase", fontWeight: 700 }}>
+                    {user.charAt(0)}
+                  </Avatar>
+                }
+                label={user}
+                size="small"
+                variant="outlined"
+                sx={{ fontWeight: 600, maxWidth: 180 }}
+              />
+            </Tooltip>
+          ) : null}
           <LogoutButton />
         </Stack>
       </Box>

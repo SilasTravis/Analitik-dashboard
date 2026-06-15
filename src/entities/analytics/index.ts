@@ -21,6 +21,10 @@ export type {
   PagePerformanceRow,
   DeviceFilter,
   PerfArgs,
+  OrderStatusRow,
+  ConversionArgs,
+  ConversionFunnel,
+  ConversionKpis,
 } from "./model/types";
 export { analyticsKeys } from "./model/query-keys";
 export { analyticsApi } from "./api/analytics.api";

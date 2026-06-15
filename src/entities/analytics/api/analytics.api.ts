@@ -20,6 +20,10 @@ import type {
   PerformanceTrendPoint,
   PagePerformanceRow,
   PerfArgs,
+  OrderStatusRow,
+  ConversionArgs,
+  ConversionFunnel,
+  ConversionKpis,
 } from "../model/types";
 
 export const analyticsApi = {
@@ -57,4 +61,10 @@ export const analyticsApi = {
     invoke<PerformanceTrendPoint[]>("get_performance_trend", { args }),
   getPagePerformance: (args: PerfArgs) =>
     invoke<PagePerformanceRow[]>("get_page_performance", { args }),
+  getOrderStatuses: (args: RangeArgs) =>
+    invoke<OrderStatusRow[]>("get_order_statuses", { args }),
+  getConversionFunnel: (args: ConversionArgs) =>
+    invoke<ConversionFunnel>("get_conversion_funnel", { args }),
+  getConversionKpis: (args: ConversionArgs) =>
+    invoke<ConversionKpis>("get_conversion_kpis", { args }),
 };

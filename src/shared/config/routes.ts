@@ -4,6 +4,7 @@ export const ROUTES = {
   compare: "/compare",
   campaigns: "/campaigns",
   userFlow: "/user-flow",
+  conversion: "/conversion",
   performance: "/performance",
   aiScanner: "/ai-scanner",
   settings: "/settings",

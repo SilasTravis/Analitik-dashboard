@@ -138,3 +138,42 @@ export type PagePerformanceRow = {
   fid_p75: number | null;
   full_load_p75: number | null;
 };
+
+export type OrderStatusRow = {
+  status: string;
+  orders: number;
+};
+
+export type ConversionArgs = RangeArgs & {
+  device: DeviceFilter;
+  /** Order statuses that count as a completed conversion. */
+  statuses: string[];
+};
+
+export type ConversionFunnel = {
+  sessions: number;
+  viewed_product: number;
+  added_basket: number;
+  order_placed: number;
+  order_completed: number;
+};
+
+export type ConversionKpis = {
+  sessions: number;
+  basket_sessions: number;
+  ordering_sessions: number;
+  completed_sessions: number;
+  orders_placed: number;
+  orders_completed: number;
+  revenue_placed: number;
+  revenue_completed: number;
+  attributed_orders: number;
+  total_orders: number;
+  session_to_basket_rate: number;
+  basket_to_order_rate: number;
+  session_to_order_rate: number;
+  cart_abandonment_rate: number;
+  avg_order_value: number;
+  revenue_per_session: number;
+  attributed_pct: number;
+};

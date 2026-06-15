@@ -33,6 +33,9 @@ pub fn run() {
             commands::analytics::get_referrers_report,
             commands::user_flow::get_page_flow_map,
             commands::user_flow::get_page_engagement_report,
+            commands::conversion::get_order_statuses,
+            commands::conversion::get_conversion_funnel,
+            commands::conversion::get_conversion_kpis,
             commands::performance::get_performance_overview,
             commands::performance::get_performance_trend,
             commands::performance::get_page_performance,
@@ -158,5 +161,133 @@ mod tests {
         println!("m + d + orphan .......... {}", mobile + desktop + orphan);
         println!("=> m+d+orphan should equal total; mobile & desktop must not overlap");
         println!("==========================================================");
+    }
+
+    /// Confirms the vocabulary assumptions baked into the Conversion funnel
+    /// SQL (`commands/conversion.rs`): the `analytics_basket.action` values,
+    /// the `analytics_page_views.page_type` values, the `orders.status` set,
+    /// and how many orders carry a `session_id` (attribution coverage).
+    /// Ignored by default (needs saved DB credentials); run with:
+    ///   cargo test diag_conversion_vocab -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn diag_conversion_vocab() {
+        let creds = match crate::security::vault::load() {
+            Ok(c) => c,
+            Err(e) => {
+                println!("Failed to load credentials: {:?}", e);
+                return;
+            }
+        };
+        let (client, connection) =
+            creds.to_config().connect(tokio_postgres::NoTls).await.unwrap();
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("connection error: {}", e);
+            }
+        });
+
+        let dump = |title: &'static str, sql: String| {
+            let client = &client;
+            async move {
+                println!("---- {title} ----");
+                match client.query(&sql, &[]).await {
+                    Ok(rows) => {
+                        for r in rows {
+                            let label: String = r.get("label");
+                            let c: i64 = r.get("c");
+                            println!("  {label:<28} {c}");
+                        }
+                    }
+                    Err(e) => println!("  query error: {e}"),
+                }
+            }
+        };
+
+        let win = "occurred_at >= NOW() - interval '30 days'";
+        println!("============== CONVERSION VOCAB DIAG (last 30d) ==============");
+
+        dump(
+            "analytics_basket.action",
+            format!(
+                "SELECT COALESCE(NULLIF(action,''),'<null>') AS label, COUNT(*)::bigint AS c \
+                 FROM analytics_basket WHERE {win} GROUP BY 1 ORDER BY c DESC"
+            ),
+        )
+        .await;
+
+        dump(
+            "analytics_page_views.page_type (top 20)",
+            format!(
+                "SELECT COALESCE(NULLIF(page_type,''),'<null>') AS label, COUNT(*)::bigint AS c \
+                 FROM analytics_page_views WHERE {win} GROUP BY 1 ORDER BY c DESC LIMIT 20"
+            ),
+        )
+        .await;
+
+        dump(
+            "orders.status",
+            "SELECT COALESCE(NULLIF(status,''),'<null>') AS label, COUNT(*)::bigint AS c \
+             FROM orders WHERE created_at >= NOW() - interval '30 days' AND deleted_at IS NULL \
+             GROUP BY 1 ORDER BY c DESC"
+                .to_string(),
+        )
+        .await;
+
+        dump(
+            "orders attribution coverage",
+            "SELECT CASE WHEN session_id IS NOT NULL THEN 'has session_id' \
+                         WHEN device_id IS NOT NULL THEN 'device_id only' \
+                         ELSE 'unattributed' END AS label, COUNT(*)::bigint AS c \
+             FROM orders WHERE created_at >= NOW() - interval '30 days' AND deleted_at IS NULL \
+             GROUP BY 1 ORDER BY c DESC"
+                .to_string(),
+        )
+        .await;
+
+        println!("---- funnel sanity (last 30d, all devices, completed=completed+delivered) ----");
+        let funnel_sql = "
+            WITH sess AS (
+                SELECT DISTINCT session_id FROM analytics_sessions
+                WHERE occurred_at >= NOW() - interval '30 days'),
+            viewed AS (
+                SELECT DISTINCT session_id FROM analytics_page_views
+                WHERE occurred_at >= NOW() - interval '30 days' AND page_type = 'product_view'
+                  AND session_id IN (SELECT session_id FROM sess)),
+            basket AS (
+                SELECT DISTINCT session_id FROM analytics_basket
+                WHERE occurred_at >= NOW() - interval '30 days' AND action = 'BASKET_ACTION_ADD'
+                  AND session_id IN (SELECT session_id FROM sess)),
+            placed AS (
+                SELECT DISTINCT session_id FROM orders
+                WHERE created_at >= NOW() - interval '30 days' AND deleted_at IS NULL
+                  AND session_id IS NOT NULL AND session_id IN (SELECT session_id FROM sess)),
+            completed AS (
+                SELECT DISTINCT session_id FROM orders
+                WHERE created_at >= NOW() - interval '30 days' AND deleted_at IS NULL
+                  AND session_id IS NOT NULL AND status = ANY(ARRAY['completed','delivered'])
+                  AND session_id IN (SELECT session_id FROM sess))
+            SELECT (SELECT COUNT(*) FROM sess)::bigint AS sessions,
+                   (SELECT COUNT(*) FROM viewed)::bigint AS viewed,
+                   (SELECT COUNT(*) FROM basket)::bigint AS basket,
+                   (SELECT COUNT(*) FROM placed)::bigint AS placed,
+                   (SELECT COUNT(*) FROM completed)::bigint AS completed";
+        match client.query_one(funnel_sql, &[]).await {
+            Ok(r) => {
+                let s: i64 = r.get("sessions");
+                let v: i64 = r.get("viewed");
+                let b: i64 = r.get("basket");
+                let p: i64 = r.get("placed");
+                let c: i64 = r.get("completed");
+                println!("  sessions ........ {s}");
+                println!("  viewed_product .. {v}");
+                println!("  added_basket .... {b}");
+                println!("  order_placed .... {p}");
+                println!("  order_completed . {c}");
+                println!("  => should be monotonically non-increasing");
+            }
+            Err(e) => println!("  funnel query error: {e}"),
+        }
+        println!("=============================================================");
     }
 }
