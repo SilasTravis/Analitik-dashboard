@@ -68,14 +68,14 @@ TanStack Query deduplicates each request. Refresh invalidates all analytics keys
 
 ## Query Design
 
-The traffic query materializes only required columns after both predicates:
+The traffic query applies both predicates while aggregating page views directly into daily totals:
 
 ```sql
 WHERE received_at BETWEEN ($1 - interval '48 hours') AND ($2 + interval '48 hours')
   AND occurred_at BETWEEN $1 AND $2
 ```
 
-The traffic-core query derives total and daily visits. The geography query intentionally repeats the bounded candidate selection but performs only the top-ten country/city aggregate.
+Only the small daily aggregate and zero-filled result are materialized; the total is summed from those rows. This avoids materializing and rescanning roughly 1.5 million raw page views. The geography query independently repeats the bounded candidate selection for its top-ten country/city aggregate.
 
 The session query dynamically discovers source values, applies the indexed `session_registered_at` candidate range, and makes the final inclusion decision with:
 

@@ -11,12 +11,14 @@ const SET_STATEMENT_TIMEOUT_SQL: &str = "SET statement_timeout = '15s'";
 const RESET_STATEMENT_TIMEOUT_SQL: &str = "RESET statement_timeout";
 
 const TRAFFIC_SQL: &str = r#"
-WITH candidates AS MATERIALIZED (
-    SELECT occurred_at
+WITH daily AS MATERIALIZED (
+    SELECT date_trunc('day', occurred_at)::date AS day,
+           COUNT(*)::bigint AS visits
     FROM analytics_page_views
-WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours')
-                      AND ($2::timestamptz + interval '48 hours')
-  AND occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
+    WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours')
+                          AND ($2::timestamptz + interval '48 hours')
+      AND occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
+    GROUP BY 1
 ),
 days AS (
     SELECT generate_series(
@@ -25,33 +27,25 @@ days AS (
         interval '1 day'
     )::date AS day
 ),
-daily AS (
-    SELECT date_trunc('day', occurred_at)::date AS day,
-           COUNT(*)::bigint AS visits
-    FROM candidates
-    GROUP BY 1
-),
-tagged AS (
-    SELECT 'total'::text AS row_type,
-           NULL::date AS day,
-           COUNT(*)::bigint AS visits,
-           0::int AS group_order,
-           0::bigint AS row_order
-    FROM candidates
-
-    UNION ALL
-
-    SELECT 'daily'::text AS row_type,
-           d.day,
-           COALESCE(v.visits, 0)::bigint AS visits,
-           1::int AS group_order,
-           (d.day - DATE '1970-01-01')::bigint AS row_order
-    FROM days d
-    LEFT JOIN daily v USING (day)
+filled AS MATERIALIZED (
+    SELECT days.day,
+           COALESCE(daily.visits, 0)::bigint AS visits
+    FROM days
+    LEFT JOIN daily USING (day)
 )
-SELECT row_type, day, visits
-FROM tagged
-ORDER BY group_order, row_order;
+SELECT 'total'::text AS row_type,
+       NULL::date AS day,
+       COALESCE(SUM(visits), 0)::bigint AS visits
+FROM filled
+
+UNION ALL
+
+SELECT 'daily'::text AS row_type,
+       day,
+       visits
+FROM filled
+
+ORDER BY day NULLS FIRST;
 "#;
 
 #[derive(Debug, Serialize)]
@@ -136,9 +130,10 @@ mod tests {
 
     #[test]
     fn dashboard_traffic_query_uses_received_at_candidate_range() {
-        assert!(TRAFFIC_SQL.contains(
-            "WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours')\n\
-             \x20                     AND ($2::timestamptz + interval '48 hours')"
+        let sql = compact(TRAFFIC_SQL);
+
+        assert!(sql.contains(
+            "WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours') AND ($2::timestamptz + interval '48 hours')"
         ));
     }
 
@@ -148,13 +143,17 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_traffic_materializes_only_occurred_at_for_total_and_daily_rows() {
+    fn dashboard_traffic_aggregates_before_materializing_daily_rows() {
         let sql = compact(TRAFFIC_SQL);
 
         assert!(sql.contains(
-            "WITH candidates AS MATERIALIZED ( SELECT occurred_at FROM analytics_page_views"
+            "WITH daily AS MATERIALIZED ( SELECT date_trunc('day', occurred_at)::date AS day, COUNT(*)::bigint AS visits FROM analytics_page_views"
         ));
+        assert!(!sql.contains("candidates AS MATERIALIZED"));
         assert_eq!(sql.matches("FROM analytics_page_views").count(), 1);
+        assert!(sql.contains("GROUP BY 1"));
+        assert!(sql.contains("filled AS MATERIALIZED"));
+        assert!(sql.contains("COALESCE(SUM(visits), 0)::bigint AS visits FROM filled"));
         assert!(sql.contains("generate_series"));
         assert!(sql.contains("'total'::text AS row_type"));
         assert!(sql.contains("'daily'::text AS row_type"));
@@ -205,15 +204,14 @@ mod tests {
     fn dashboard_traffic_daily_rows_are_zero_filled() {
         let sql = compact(TRAFFIC_SQL);
 
-        assert!(sql.contains("LEFT JOIN daily v USING (day)"));
-        assert!(sql.contains("COALESCE(v.visits, 0)::bigint AS visits"));
+        assert!(sql.contains("LEFT JOIN daily USING (day)"));
+        assert!(sql.contains("COALESCE(daily.visits, 0)::bigint AS visits"));
     }
 
     #[test]
     fn dashboard_traffic_daily_rows_are_ordered_by_date() {
         let sql = compact(TRAFFIC_SQL);
 
-        assert!(sql.contains("(d.day - DATE '1970-01-01')::bigint AS row_order"));
-        assert!(sql.contains("ORDER BY group_order, row_order"));
+        assert!(sql.contains("ORDER BY day NULLS FIRST"));
     }
 }

@@ -31,7 +31,7 @@
 
 - [ ] Write failing tests asserting the query contains the 48-hour `received_at` candidate range, exact `occurred_at BETWEEN $1 AND $2`, and a KPI helper preserves zero and nonzero counts.
 - [ ] Run `cargo test dashboard_traffic --manifest-path src-tauri/Cargo.toml` and confirm RED because the constants/helpers are missing.
-- [ ] Implement a materialized candidate CTE that returns tagged total and daily rows. Fill missing days with zero visits.
+- [ ] Aggregate page views into daily totals in one pass, materialize only the small daily and zero-filled results, and derive the total from those rows.
 - [ ] Guarantee `statement_timeout = '15s'` is reset after success or failure.
 - [ ] Run focused tests, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, and report exact results. Do not edit shared module registration files and do not commit.
 
