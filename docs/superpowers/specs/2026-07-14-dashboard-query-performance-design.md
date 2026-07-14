@@ -75,7 +75,7 @@ WHERE received_at BETWEEN ($1 - interval '48 hours') AND ($2 + interval '48 hour
   AND occurred_at BETWEEN $1 AND $2
 ```
 
-Only the small daily aggregate and zero-filled result are materialized; the total is summed from those rows. This avoids materializing and rescanning roughly 1.5 million raw page views. The geography query independently repeats the bounded candidate selection for its top-ten country/city aggregate.
+Only the small daily aggregate and zero-filled result are materialized; the total is summed from those rows. This avoids materializing and rescanning roughly 1.5 million raw page views. The geography query groups the bounded page-view stream directly, without materializing raw geography rows.
 
 The session query dynamically discovers source values, applies the indexed `session_registered_at` candidate range, and makes the final inclusion decision with:
 
@@ -83,9 +83,9 @@ The session query dynamically discovers source values, applies the indexed `sess
 WHERE occurred_at BETWEEN $1 AND $2
 ```
 
-It derives total distinct sessions, daily distinct sessions, and devices from one candidate set. Source values are not hard-coded.
+One `GROUPING SETS` pass derives total distinct sessions, daily distinct sessions, and devices. Only those grouped rows are materialized, and the generated day series still fills missing days with zero. Source values are not hard-coded.
 
-The commerce query materializes orders in the requested `created_at` range once, derives total and daily revenue plus sources, and joins the bounded orders to products for the top-product aggregate.
+The commerce query uses one `GROUPING SETS` pass for total revenue, daily revenue, and sources, materializing only the grouped rows. The already-fast top-product query separately joins the bounded orders to products.
 
 ## Progressive UI Behavior
 

@@ -51,7 +51,7 @@ WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours')
 - Create: `src-tauri/src/commands/dashboard_geo.rs`
 
 - [ ] Write failing tests for the 48-hour indexed candidate bound, exact `occurred_at` predicate, legacy fallbacks, descending order, and top-10 limit.
-- [ ] Implement `get_dashboard_geo -> Vec<GeoRow>` with its own cacheable command.
+- [ ] Implement `get_dashboard_geo -> Vec<GeoRow>` with its own cacheable command and aggregate directly from the bounded stream without materializing raw rows.
 - [ ] Acquire the shared dashboard guard across `SET` / query / `RESET` and add reset/error tests.
 - [ ] Run focused tests and formatting checks. Do not edit shared registration files and do not commit.
 
@@ -68,7 +68,7 @@ WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours')
 
 - [ ] Write failing tests asserting dynamic source discovery, the five-minute registered-time candidate range, exact `occurred_at BETWEEN $1 AND $2`, and no hard-coded source values.
 - [ ] Run `cargo test dashboard_sessions --manifest-path src-tauri/Cargo.toml` and confirm RED.
-- [ ] Implement a recursive loose-index scan for non-null source types, then one materialized candidate query using `source_type = ANY($3::text[]) OR source_type IS NULL`.
+- [ ] Implement a recursive loose-index scan for non-null source types, then one `GROUPING SETS` pass using `source_type = ANY($3::text[]) OR source_type IS NULL`; materialize only grouped results.
 - [ ] Return tagged total, daily, and device rows; fill missing days with zero sessions; preserve null `is_mobile` as Desktop to match the legacy `CASE WHEN` behavior.
 - [ ] Guarantee `statement_timeout = '15s'` is reset after success or failure.
 - [ ] Run focused tests, formatting check, and report exact results. Do not edit shared module registration files and do not commit.
@@ -94,9 +94,9 @@ WHERE (source_type = ANY($3::text[]) OR source_type IS NULL)
 - Consumes: `RangeArgs`, `DailyRevenue`, `ProductRow`, and `SourceRow` from `commands::analytics`, `ConnectionState`, and `AppResult`.
 - Produces: `DashboardCommerce { orders, revenue, daily_revenue, order_sources, top_products }` and Tauri command `get_dashboard_commerce`.
 
-- [ ] Write failing tests asserting one bounded materialized order set powers totals, daily revenue, and sources, and top products join only bounded non-deleted orders.
+- [ ] Write failing tests asserting one aggregate pass powers totals, daily revenue, and sources, and top products join only bounded non-deleted orders.
 - [ ] Run `cargo test dashboard_commerce --manifest-path src-tauri/Cargo.toml` and confirm RED.
-- [ ] Implement the bundled order aggregate and top-products query while preserving legacy grouping, names, ordering, and limits.
+- [ ] Implement a `GROUPING SETS` order aggregate plus the top-products query while preserving legacy names, ordering, and limits.
 - [ ] Fill missing days with zero orders and revenue and guarantee `statement_timeout = '15s'` is reset.
 - [ ] Run focused tests, formatting check, and report exact results. Do not edit shared module registration files and do not commit.
 

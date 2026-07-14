@@ -8,17 +8,13 @@ const SET_STATEMENT_TIMEOUT_SQL: &str = "SET statement_timeout = '15s'";
 const RESET_STATEMENT_TIMEOUT_SQL: &str = "RESET statement_timeout";
 
 const GEO_SQL: &str = r#"
-WITH candidates AS MATERIALIZED (
-    SELECT viewer_country, viewer_city
-    FROM analytics_page_views
-    WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours')
-                          AND ($2::timestamptz + interval '48 hours')
-      AND occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
-)
 SELECT COALESCE(NULLIF(viewer_country, ''), 'Unknown') AS country,
        COALESCE(NULLIF(viewer_city, ''), '—') AS city,
        COUNT(*)::bigint AS visits
-FROM candidates
+FROM analytics_page_views
+WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours')
+                      AND ($2::timestamptz + interval '48 hours')
+  AND occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
 GROUP BY 1, 2
 ORDER BY visits DESC
 LIMIT 10;
@@ -79,12 +75,11 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_geo_materializes_only_the_columns_used_by_the_top_ten() {
+    fn dashboard_geo_aggregates_directly_without_materializing_raw_rows() {
         let sql = compact(GEO_SQL);
 
-        assert!(sql.contains(
-            "WITH candidates AS MATERIALIZED ( SELECT viewer_country, viewer_city FROM analytics_page_views"
-        ));
+        assert!(!sql.contains("AS MATERIALIZED"));
+        assert!(!sql.contains("WITH candidates"));
         assert_eq!(sql.matches("FROM analytics_page_views").count(), 1);
     }
 

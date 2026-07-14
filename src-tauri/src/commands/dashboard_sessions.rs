@@ -41,17 +41,24 @@ const SOURCE_TYPES_SQL: &str = r#"
     ORDER BY source_type;
 "#;
 
-/// Materialize the bounded sessions once, then derive all three dashboard
-/// sections from that same candidate set.
+/// Aggregate the bounded sessions in one pass, then materialize only the
+/// small total, daily, and device result set.
 const SESSIONS_SQL: &str = r#"
-    WITH candidates AS MATERIALIZED (
-        SELECT session_id, occurred_at, is_mobile
+    WITH aggregates AS MATERIALIZED (
+        SELECT date_trunc('day', occurred_at)::date AS day,
+               CASE WHEN is_mobile THEN 'Mobile' ELSE 'Desktop' END AS device,
+               COUNT(DISTINCT session_id)::bigint AS sessions
         FROM analytics_sessions
         WHERE (source_type = ANY($3::text[]) OR source_type IS NULL)
           AND session_registered_at BETWEEN
               (($1::timestamptz - interval '5 minutes') AT TIME ZONE 'UTC') AND
               (($2::timestamptz + interval '5 minutes') AT TIME ZONE 'UTC')
           AND occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
+        GROUP BY GROUPING SETS (
+            (),
+            (date_trunc('day', occurred_at)::date),
+            (CASE WHEN is_mobile THEN 'Mobile' ELSE 'Desktop' END)
+        )
     ),
     days AS (
         SELECT generate_series(
@@ -59,25 +66,15 @@ const SESSIONS_SQL: &str = r#"
             date_trunc('day', $2::timestamptz),
             interval '1 day'
         )::date AS day
-    ),
-    daily AS (
-        SELECT date_trunc('day', occurred_at)::date AS day,
-               COUNT(DISTINCT session_id)::bigint AS sessions
-        FROM candidates
-        GROUP BY 1
-    ),
-    devices AS (
-        SELECT CASE WHEN is_mobile THEN 'Mobile' ELSE 'Desktop' END AS device,
-               COUNT(DISTINCT session_id)::bigint AS sessions
-        FROM candidates
-        GROUP BY 1
     )
     SELECT 0::int2 AS sort_order,
            'total' AS kind,
            NULL::date AS day,
            NULL::text AS device,
-           COUNT(DISTINCT session_id)::bigint AS sessions
-    FROM candidates
+           COALESCE(MAX(aggregates.sessions), 0)::bigint AS sessions
+    FROM aggregates
+    WHERE aggregates.day IS NULL
+      AND aggregates.device IS NULL
 
     UNION ALL
 
@@ -85,18 +82,22 @@ const SESSIONS_SQL: &str = r#"
            'daily' AS kind,
            days.day,
            NULL::text AS device,
-           COALESCE(daily.sessions, 0)::bigint AS sessions
+           COALESCE(aggregates.sessions, 0)::bigint AS sessions
     FROM days
-    LEFT JOIN daily ON daily.day = days.day
+    LEFT JOIN aggregates
+      ON aggregates.day = days.day
+     AND aggregates.device IS NULL
 
     UNION ALL
 
     SELECT 2::int2 AS sort_order,
            'device' AS kind,
            NULL::date AS day,
-           devices.device,
-           devices.sessions
-    FROM devices
+           aggregates.device,
+           aggregates.sessions
+    FROM aggregates
+    WHERE aggregates.day IS NULL
+      AND aggregates.device IS NOT NULL
 
     ORDER BY sort_order, day, sessions DESC, device;
 "#;
@@ -248,14 +249,18 @@ mod dashboard_sessions_tests {
     }
 
     #[test]
-    fn dashboard_sessions_materializes_one_candidate_set_for_tagged_aggregates() {
+    fn dashboard_sessions_materializes_only_grouped_results() {
         let sql = compact(SESSIONS_SQL);
 
         assert_eq!(sql.matches("AS MATERIALIZED").count(), 1);
+        assert!(sql.contains("WITH aggregates AS MATERIALIZED"));
+        assert!(!sql.contains("candidates AS MATERIALIZED"));
+        assert!(sql.contains("GROUP BY GROUPING SETS"));
+        assert_eq!(sql.matches("FROM analytics_sessions").count(), 1);
         assert!(sql.contains("'total' AS kind"));
         assert!(sql.contains("'daily' AS kind"));
         assert!(sql.contains("'device' AS kind"));
-        assert!(sql.contains("COALESCE(daily.sessions, 0)"));
+        assert!(sql.contains("COALESCE(aggregates.sessions, 0)"));
         assert!(sql.contains("CASE WHEN is_mobile THEN 'Mobile' ELSE 'Desktop' END"));
     }
 

@@ -11,11 +11,19 @@ const SET_STATEMENT_TIMEOUT_SQL: &str = "SET statement_timeout = '15s'";
 const RESET_STATEMENT_TIMEOUT_SQL: &str = "RESET statement_timeout";
 
 const COMMERCE_AGGREGATE_SQL: &str = "
-    WITH bounded_orders AS MATERIALIZED (
-        SELECT created_at, total_price, order_source_type
+    WITH aggregates AS MATERIALIZED (
+        SELECT date_trunc('day', created_at)::date AS day,
+               COALESCE(NULLIF(order_source_type, ''), 'direct') AS source,
+               COUNT(*)::bigint AS orders,
+               COALESCE(SUM(total_price), 0)::float8 AS revenue
         FROM orders
         WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
           AND deleted_at IS NULL
+        GROUP BY GROUPING SETS (
+            (),
+            (date_trunc('day', created_at)::date),
+            (COALESCE(NULLIF(order_source_type, ''), 'direct'))
+        )
     ),
     days AS (
         SELECT generate_series(
@@ -24,26 +32,13 @@ const COMMERCE_AGGREGATE_SQL: &str = "
             interval '1 day'
         )::date AS day
     ),
-    daily_orders AS (
-        SELECT date_trunc('day', created_at)::date AS day,
-               COUNT(*)::bigint AS orders,
-               COALESCE(SUM(total_price), 0)::float8 AS revenue
-        FROM bounded_orders
-        GROUP BY 1
-    ),
     source_rows AS (
-        SELECT COALESCE(NULLIF(order_source_type, ''), 'direct') AS source,
-               COUNT(*)::bigint AS orders,
-               COALESCE(SUM(total_price), 0)::float8 AS revenue
-        FROM bounded_orders
-        GROUP BY 1
+        SELECT source, orders, revenue
+        FROM aggregates
+        WHERE day IS NULL
+          AND source IS NOT NULL
         ORDER BY revenue DESC
         LIMIT 10
-    ),
-    total_orders AS (
-        SELECT COUNT(*)::bigint AS orders,
-               COALESCE(SUM(total_price), 0)::float8 AS revenue
-        FROM bounded_orders
     )
     SELECT kind, day, orders, revenue, source
     FROM (
@@ -53,18 +48,22 @@ const COMMERCE_AGGREGATE_SQL: &str = "
                orders,
                revenue,
                NULL::text AS source
-        FROM total_orders
+        FROM aggregates
+        WHERE day IS NULL
+          AND source IS NULL
 
         UNION ALL
 
         SELECT 1 AS section,
                'daily'::text AS kind,
-               d.day,
-               COALESCE(o.orders, 0) AS orders,
-               COALESCE(o.revenue, 0) AS revenue,
+               days.day,
+               COALESCE(aggregates.orders, 0) AS orders,
+               COALESCE(aggregates.revenue, 0) AS revenue,
                NULL::text AS source
-        FROM days d
-        LEFT JOIN daily_orders o USING (day)
+        FROM days
+        LEFT JOIN aggregates
+          ON aggregates.day = days.day
+         AND aggregates.source IS NULL
 
         UNION ALL
 
@@ -209,17 +208,17 @@ mod tests {
     }
 
     #[test]
-    fn bounded_materialized_orders_power_all_commerce_aggregates() {
+    fn commerce_aggregates_orders_in_one_pass_before_materializing() {
         let sql = compact(COMMERCE_AGGREGATE_SQL);
 
-        assert!(sql.contains("WITH bounded_orders AS MATERIALIZED"));
+        assert!(sql.contains("WITH aggregates AS MATERIALIZED"));
+        assert!(!sql.contains("bounded_orders AS MATERIALIZED"));
         assert!(sql.contains(
             "WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz AND deleted_at IS NULL"
         ));
         assert_eq!(sql.matches("FROM orders").count(), 1);
-        assert!(sql.contains("FROM bounded_orders GROUP BY 1"));
-        assert!(sql.contains("FROM bounded_orders GROUP BY 1 ORDER BY revenue DESC LIMIT 10"));
-        assert!(sql.contains("FROM bounded_orders"));
+        assert!(sql.contains("GROUP BY GROUPING SETS"));
+        assert!(sql.contains("FROM aggregates"));
     }
 
     #[test]
@@ -227,9 +226,9 @@ mod tests {
         let sql = compact(COMMERCE_AGGREGATE_SQL);
 
         assert!(sql.contains("SELECT generate_series("));
-        assert!(sql.contains("LEFT JOIN daily_orders o USING (day)"));
-        assert!(sql.contains("COALESCE(o.orders, 0) AS orders"));
-        assert!(sql.contains("COALESCE(o.revenue, 0) AS revenue"));
+        assert!(sql.contains("LEFT JOIN aggregates ON aggregates.day = days.day"));
+        assert!(sql.contains("COALESCE(aggregates.orders, 0) AS orders"));
+        assert!(sql.contains("COALESCE(aggregates.revenue, 0) AS revenue"));
         assert!(sql.contains("COALESCE(NULLIF(order_source_type, ''), 'direct') AS source"));
         assert!(sql.contains("ORDER BY revenue DESC LIMIT 10"));
     }
