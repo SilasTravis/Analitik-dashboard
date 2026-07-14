@@ -2,11 +2,12 @@
 
 ## Goal
 
-Reduce the first uncached home-dashboard response from minutes to seconds without changing the database schema, changing the existing UI, or replacing `occurred_at` as the authoritative analytics timestamp.
+Reduce the first uncached home-dashboard response from minutes to seconds without changing the database schema, changing the existing UI, or replacing `occurred_at` as the authoritative analytics timestamp. Widgets must render progressively instead of waiting for one monolithic response.
 
 ## Constraints
 
 - Do not create, alter, or remove database objects.
+- Work on `main`, as explicitly approved by the user.
 - Keep every home-dashboard widget, layout, label, loading state, and date-range interaction unchanged.
 - Keep `occurred_at` as the final inclusion predicate for analytics rows.
 - Keep the existing five-minute TanStack Query cache behavior.
@@ -14,81 +15,102 @@ Reduce the first uncached home-dashboard response from minutes to seconds withou
 
 ## Selected Approach
 
-Add one `get_dashboard_overview` Tauri command and one shared frontend query. The command will replace the seven independently queued home-dashboard commands while leaving commands used by other pages unchanged.
+Replace seven independent home queries with three domain bundles. Each bundle scans its primary dataset once and returns independently, allowing its widgets to render while later bundles are still loading.
 
-The command will query each major dataset once:
+### Traffic bundle
 
-1. Page views: use the existing `received_at` index to select a bounded candidate set, then apply the exact requested `occurred_at` range. The candidate range extends 48 hours before and after the requested range. Current sampled production data showed a maximum observed page-view delivery delay of about 24 hours, so the margin doubles the observed maximum.
-2. Sessions: use the existing `(source_type, session_registered_at)` index to select candidates, then apply the exact requested `occurred_at` range. The candidate range extends five minutes before and after the requested range. Current sampled production data showed at most 0.5 seconds between `session_registered_at` and `occurred_at`.
-3. Orders: keep the existing indexed `created_at` filters and aggregate KPI, daily-revenue, and order-source data from one bounded order set.
-4. Products: retain the current top-products query because it already uses indexed order and product joins and completes independently in about two seconds.
+`get_dashboard_traffic` returns total visits, daily visits, and top geography. It uses the existing `received_at` index to select a bounded candidate set, then applies the exact requested `occurred_at` range. The candidate range extends 48 hours before and after the requested range. Current sampled production data showed a maximum observed page-view delivery delay of about 24 hours.
 
-The page-view, session, and order queries will each produce all home-dashboard aggregates needed from that dataset. Rust will merge the results into one serializable `DashboardOverview` response.
+### Sessions bundle
 
-## Data Contract
+`get_dashboard_sessions` returns total distinct sessions, daily distinct sessions, and devices. It discovers non-null `source_type` values through the existing source index, uses the existing `(source_type, session_registered_at)` index to select candidates, includes the null source bucket, and then applies the exact requested `occurred_at` range. The candidate range extends five minutes before and after the requested range. Current sampled production data showed at most 0.5 seconds between `session_registered_at` and `occurred_at`.
 
-`DashboardOverview` will contain:
+### Commerce bundle
 
-- `kpi: KpiOverview`
-- `dailyTraffic: DailyTraffic[]`
-- `dailyRevenue: DailyRevenue[]`
-- `devices: DeviceBucket[]`
-- `topProducts: ProductRow[]`
-- `orderSources: SourceRow[]`
-- `geo: GeoRow[]`
+`get_dashboard_commerce` returns total orders and revenue, daily orders and revenue, order sources, and top products. It retains the existing indexed `created_at` filters and indexed joins.
 
-The frontend analytics API will expose `getDashboardOverview(range)`. All seven home widget hooks will share one `analyticsKeys.dashboard(range)` query and use `select` to return only their existing widget data type. TanStack Query will deduplicate the shared request, cache the combined result, and refetch it once when Refresh invalidates analytics queries.
+## Data Contracts
+
+```text
+DashboardTraffic
+  visits: number
+  dailyVisits: DailyVisits[]
+  geo: GeoRow[]
+
+DashboardSessions
+  sessions: number
+  dailySessions: DailySessions[]
+  devices: DeviceBucket[]
+
+DashboardCommerce
+  orders: number
+  revenue: number
+  dailyRevenue: DailyRevenue[]
+  orderSources: SourceRow[]
+  topProducts: ProductRow[]
+```
+
+The frontend exposes three query keys and three API methods. Existing widget hooks keep their current public shapes:
+
+- `useKpi` combines all three bundles and derives average order value and conversion rate.
+- `useDailyTraffic` combines `dailyVisits` and `dailySessions` by date.
+- Revenue, source, and product hooks select the commerce bundle.
+- Device selects the sessions bundle.
+- Geography selects the traffic bundle.
+
+TanStack Query deduplicates each domain request. Refresh invalidates all analytics keys, causing three requests rather than seven.
 
 ## Query Design
 
-The page-view query will materialize only the columns needed by the home page after applying both predicates:
+The traffic query materializes only required columns after both predicates:
 
 ```sql
 WHERE received_at BETWEEN ($1 - interval '48 hours') AND ($2 + interval '48 hours')
   AND occurred_at BETWEEN $1 AND $2
 ```
 
-It will derive total visits, daily visits, and top geography from that single candidate set.
+It derives total visits, daily visits, and top geography from that candidate set.
 
-The session query will discover the known non-null `source_type` values using the existing source index, scan each source's bounded `session_registered_at` range, include the null source bucket, and finally apply:
+The session query dynamically discovers source values, applies the indexed `session_registered_at` candidate range, and makes the final inclusion decision with:
 
 ```sql
 WHERE occurred_at BETWEEN $1 AND $2
 ```
 
-It will derive total distinct sessions, daily distinct sessions, and distinct sessions by device from one candidate set. Source values must not be hard-coded so newly introduced values remain included.
+It derives total distinct sessions, daily distinct sessions, and devices from one candidate set. Source values are not hard-coded.
 
-The order query will derive total orders and revenue, daily orders and revenue, and revenue by source from one bounded order set. Top products remains a separate query inside the same Tauri command.
+The commerce query materializes orders in the requested `created_at` range once, derives total and daily revenue plus sources, and joins the bounded orders to products for the top-product aggregate.
 
-## UI and Loading Behavior
+## Progressive UI Behavior
 
-No component markup or styling will change. Existing widget hooks retain their current public return shapes, so the widgets continue rendering their current spinners, errors, charts, and cards.
+No component markup or styling changes. The commerce request is initiated first because it is currently the cheapest domain and unlocks three widgets. Traffic and sessions follow and unlock their own widgets. KPI and daily traffic appear when their required bundles are available.
 
-Because all widgets share one request, they will finish together instead of waiting behind separate database requests. Cached data and manual Refresh behavior remain unchanged.
+Existing widget spinners and errors remain in place. A failed bundle affects only widgets that consume that bundle; successful bundles remain visible and cached.
 
 ## Error Handling
 
-- Database errors propagate through the existing `AppResult` and Tauri invocation error path.
-- A failed combined request must not partially replace cached dashboard data.
-- TanStack Query retains the last successful result during a failed refresh under its existing cache lifecycle.
-- The new command will use a finite statement timeout so an unexpected query plan cannot leave the UI waiting for minutes.
+- Database errors propagate through the existing `AppResult` and Tauri invocation path.
+- Each bundle updates its cache atomically.
+- TanStack Query retains each bundle's last successful result during a failed refresh under the existing cache lifecycle.
+- Each bundle uses a finite statement timeout and guarantees the connection timeout setting is reset.
 
 ## Testing and Verification
 
-Implementation will follow test-first development:
+Implementation follows test-first development:
 
-1. Rust unit tests will verify candidate bounds, the mandatory `occurred_at` predicates, dynamic session source handling, and merged KPI calculations.
-2. Frontend type checking will verify every widget hook still exposes its existing data type.
-3. Existing Rust tests and the production frontend build must pass.
-4. A read-only live benchmark for the default seven-day range will compare the combined response against the old query results field by field and record total duration.
-5. The dashboard will be opened locally to confirm that layout, labels, charts, loading states, date selection, and Refresh behavior are unchanged.
+1. Rust unit tests verify candidate bounds, mandatory `occurred_at` predicates, dynamic session source handling, and aggregate calculations.
+2. TypeScript compile-time checks drive the frontend contract migration from a failing missing shared-hook import to a passing implementation.
+3. Frontend type checking verifies every widget hook retains its existing data type.
+4. Existing Rust tests and the production frontend build must pass.
+5. Read-only live benchmarks compare optimized bundle values against legacy results and record each bundle's completion time.
+6. Source comparison confirms dashboard and widget UI files remain unchanged.
 
 ## Success Criteria
 
-- No database schema or data is changed.
+- No database schema or data changes.
 - Every home widget displays the same metric meaning and UI as before.
-- The default seven-day uncached dashboard request completes within 15 seconds in the current production environment.
-- One home-dashboard refresh produces one frontend analytics request instead of seven.
+- The first domain renders within five seconds and all default seven-day bundles finish within 15 seconds in the current production environment.
+- One refresh produces three frontend analytics requests instead of seven.
 - All automated checks and the local UI smoke test pass.
 
 ## Known Boundary
