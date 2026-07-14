@@ -476,6 +476,19 @@ const COMPARISON_SOURCE_TYPES_SQL: &str = r#"
     ORDER BY source_type;
 "#;
 
+const SET_COMPARISON_WORK_MEM_SQL: &str = "SET work_mem = '96MB'";
+const RESET_COMPARISON_WORK_MEM_SQL: &str = "RESET work_mem";
+
+fn finish_comparison_after_reset<T, E>(
+    query_result: Result<T, E>,
+    reset_result: Result<(), E>,
+) -> Result<T, E> {
+    match query_result {
+        Err(query_error) => Err(query_error),
+        Ok(value) => reset_result.map(|()| value),
+    }
+}
+
 fn comparison_visits_sql(granularity: &str) -> String {
     format!(
         r#"
@@ -493,14 +506,12 @@ fn comparison_visits_sql(granularity: &str) -> String {
         ),
         visit_rollups AS (
             SELECT
-                date_trunc('{granularity}', page_views.occurred_at::timestamptz) AS period_start,
+                date_trunc('{granularity}', page_views.received_at) AS period_start,
                 COUNT(*)::bigint AS visits
             FROM analytics_page_views page_views
             CROSS JOIN bounds
-            WHERE page_views.received_at >= bounds.start_at - interval '48 hours'
-              AND page_views.received_at < bounds.end_at + interval '48 hours'
-              AND page_views.occurred_at >= bounds.start_at
-              AND page_views.occurred_at < bounds.end_at
+            WHERE page_views.received_at >= bounds.start_at
+              AND page_views.received_at < bounds.end_at
             GROUP BY 1
         )
         SELECT periods.period_start,
@@ -519,21 +530,43 @@ fn comparison_sessions_sql(granularity: &str) -> String {
             SELECT
                 date_trunc('{granularity}', NOW() - make_interval({granularity}s => ($1 - 1)::int)) AS start_at,
                 date_trunc('{granularity}', NOW()) + interval '1 {granularity}' AS end_at
+        ),
+        periods AS (
+            SELECT generate_series(
+                (SELECT start_at FROM bounds),
+                (SELECT end_at FROM bounds) - interval '1 {granularity}',
+                interval '1 {granularity}'
+            ) AS period_start
         )
         SELECT
-            date_trunc('{granularity}', sessions.occurred_at::timestamptz) AS period_start,
-            COUNT(DISTINCT sessions.session_id)::bigint AS sessions
-        FROM analytics_sessions sessions
-        CROSS JOIN bounds
-        WHERE sessions.session_id IS NOT NULL
-          AND (sessions.source_type = ANY($2::text[]) OR sessions.source_type IS NULL)
-          AND sessions.session_registered_at >=
-              ((bounds.start_at - interval '5 minutes') AT TIME ZONE 'UTC')
-          AND sessions.session_registered_at <
-              ((bounds.end_at + interval '5 minutes') AT TIME ZONE 'UTC')
-          AND sessions.occurred_at >= bounds.start_at
-          AND sessions.occurred_at < bounds.end_at
-        GROUP BY 1;
+            periods.period_start,
+            COALESCE(session_counts.sessions, 0)::bigint AS sessions
+        FROM periods
+        LEFT JOIN LATERAL (
+            SELECT COUNT(DISTINCT sessions.session_id)::bigint AS sessions
+            FROM (
+                SELECT indexed_sessions.session_id
+                FROM analytics_sessions indexed_sessions
+                WHERE indexed_sessions.source_type = ANY($2::text[])
+                  AND indexed_sessions.session_registered_at >=
+                      (periods.period_start AT TIME ZONE 'UTC')
+                  AND indexed_sessions.session_registered_at <
+                      ((periods.period_start + interval '1 {granularity}') AT TIME ZONE 'UTC')
+                  AND indexed_sessions.session_id IS NOT NULL
+
+                UNION ALL
+
+                SELECT null_source_sessions.session_id
+                FROM analytics_sessions null_source_sessions
+                WHERE null_source_sessions.source_type IS NULL
+                  AND null_source_sessions.session_registered_at >=
+                      (periods.period_start AT TIME ZONE 'UTC')
+                  AND null_source_sessions.session_registered_at <
+                      ((periods.period_start + interval '1 {granularity}') AT TIME ZONE 'UTC')
+                  AND null_source_sessions.session_id IS NOT NULL
+            ) sessions
+        ) session_counts ON TRUE
+        ORDER BY periods.period_start;
         "#
     )
 }
@@ -543,13 +576,13 @@ fn comparison_orders_sql(granularity: &str) -> String {
         r#"
         WITH bounds AS MATERIALIZED (
             SELECT
-                date_trunc('{granularity}', NOW() - make_interval({granularity}s => ($1 - 1)::int)) AS start_at,
-                date_trunc('{granularity}', NOW()) + interval '1 {granularity}' AS end_at
+                date_trunc('{granularity}', NOW() - make_interval({granularity}s => ($1 - 1)::int))::timestamp AS start_at,
+                (date_trunc('{granularity}', NOW()) + interval '1 {granularity}')::timestamp AS end_at
         )
         SELECT
-                date_trunc('{granularity}', orders.created_at::timestamptz) AS period_start,
-                COUNT(*)::bigint AS orders,
-                COALESCE(SUM(orders.total_price), 0)::float8 AS revenue
+            date_trunc('{granularity}', orders.created_at)::timestamptz AS period_start,
+            COUNT(*)::bigint AS orders,
+            COALESCE(SUM(orders.total_price), 0)::float8 AS revenue
         FROM orders
         CROSS JOIN bounds
         WHERE orders.created_at >= bounds.start_at
@@ -586,11 +619,17 @@ pub async fn get_period_comparison(
             .into_iter()
             .map(|row| row.try_get("source_type"))
             .collect::<Result<_, tokio_postgres::Error>>()?;
-        Ok::<_, AppError>(
-            sessions_client
-                .query(&sessions_sql, &[&args.count, &source_types])
-                .await?,
-        )
+
+        sessions_client
+            .batch_execute(SET_COMPARISON_WORK_MEM_SQL)
+            .await?;
+        let query_result = sessions_client
+            .query(&sessions_sql, &[&args.count, &source_types])
+            .await;
+        let reset_result = sessions_client
+            .batch_execute(RESET_COMPARISON_WORK_MEM_SQL)
+            .await;
+        Ok::<_, AppError>(finish_comparison_after_reset(query_result, reset_result)?)
     };
     let orders_future =
         async { Ok::<_, AppError>(orders_client.query(&orders_sql, &[&args.count]).await?) };
@@ -622,6 +661,7 @@ pub async fn get_period_comparison(
                 "year" => period_start.format("%Y").to_string(),
                 _ => period_start.to_rfc3339(),
             };
+
             let (orders, revenue) = orders_by_period
                 .get(&period_start)
                 .copied()
@@ -784,7 +824,7 @@ mod report_sql_tests {
     use super::{validate_comparison_count, CAMPAIGNS_SQL};
 
     #[test]
-    fn report_sql_comparison_splits_minimal_indexed_aggregates() {
+    fn comparison_uses_existing_time_indexes_without_occurred_at() {
         let source = include_str!("analytics.rs");
         let production = source
             .split("#[cfg(test)]")
@@ -799,30 +839,21 @@ mod report_sql_tests {
         assert!(comparison.contains("fn comparison_visits_sql"));
         assert!(comparison.contains("fn comparison_sessions_sql"));
         assert!(comparison.contains("fn comparison_orders_sql"));
+        assert!(comparison.contains("COMPARISON_SOURCE_TYPES_SQL"));
         assert!(comparison.contains("tokio::try_join!"));
-
-        let visits_start = comparison
-            .find("fn comparison_visits_sql")
-            .expect("visits SQL");
-        let sessions_start = comparison
-            .find("fn comparison_sessions_sql")
-            .expect("sessions SQL");
-        let visits = &comparison[visits_start..sessions_start];
-        assert!(visits.contains("FROM analytics_page_views"));
-        assert!(visits.contains("COUNT(*)::bigint AS visits"));
-        assert!(visits.contains("received_at"));
-        assert!(!visits.contains("session_id"));
-        assert!(!visits.contains("DISTINCT"));
-
-        let orders_start = comparison
-            .find("fn comparison_orders_sql")
-            .expect("orders SQL");
-        let sessions = &comparison[sessions_start..orders_start];
-        assert!(sessions.contains("FROM analytics_sessions"));
-        assert!(sessions.contains("session_registered_at"));
-        assert!(sessions.contains("sessions.session_id IS NOT NULL"));
-        assert!(sessions.contains("COUNT(DISTINCT sessions.session_id)::bigint AS sessions"));
-        assert!(!sessions.contains("analytics_page_views"));
+        assert!(!comparison.contains("occurred_at"));
+        assert!(comparison.contains("page_views.received_at >= bounds.start_at"));
+        assert!(comparison.contains("date_trunc('{granularity}', page_views.received_at)"));
+        assert!(comparison.contains("indexed_sessions.session_registered_at >="));
+        assert!(comparison.contains("indexed_sessions.source_type = ANY($2::text[])"));
+        assert!(comparison.contains("null_source_sessions.source_type IS NULL"));
+        assert!(comparison.contains("SET_COMPARISON_WORK_MEM_SQL"));
+        assert!(comparison.contains("RESET_COMPARISON_WORK_MEM_SQL"));
+        assert_eq!(comparison.matches("FROM analytics_page_views").count(), 1);
+        assert_eq!(comparison.matches("FROM analytics_sessions").count(), 2);
+        assert_eq!(comparison.matches("FROM orders").count(), 1);
+        assert!(comparison.contains("COUNT(DISTINCT sessions.session_id)::bigint AS sessions"));
+        assert!(comparison.contains("orders.created_at >= bounds.start_at"));
     }
 
     #[test]
@@ -850,11 +881,23 @@ mod report_sql_tests {
             .next()
             .expect("production source");
 
-        assert!(production.contains("page_views.occurred_at::timestamptz"));
-        assert!(production.contains("sessions.occurred_at::timestamptz"));
-        assert!(production.contains("orders.created_at::timestamptz"));
+        assert!(production.contains("date_trunc('{granularity}', page_views.received_at)"));
+        assert!(production.contains("periods.period_start AT TIME ZONE 'UTC'"));
+        assert!(production.contains(
+            "date_trunc('{granularity}', orders.created_at)::timestamptz AS period_start"
+        ));
         assert!(production.contains("row.try_get(\"period_start\")"));
         assert!(!production.contains("row.get(\"period_start\")"));
+    }
+
+    #[test]
+    fn comparison_request_reuses_recent_results_without_retry_storms() {
+        let query = include_str!("../../../src/entities/analytics/model/use-comparison.ts");
+
+        assert!(query.contains("staleTime: 5 * 60 * 1000"));
+        assert!(query.contains("gcTime: 30 * 60 * 1000"));
+        assert!(query.contains("refetchOnWindowFocus: false"));
+        assert!(query.contains("retry: 1"));
     }
 
     #[test]

@@ -10,5 +10,9 @@ export function usePeriodComparison() {
   return useQuery({
     queryKey: analyticsKeys.comparison(args),
     queryFn: () => analyticsApi.getPeriodComparison(args),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 }
