@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -36,7 +38,6 @@ pub async fn get_kpi_overview(
 ) -> AppResult<KpiOverview> {
     let client = state.client().await?;
 
-
     let sql = "
         WITH
         v AS (SELECT COUNT(*)::bigint AS c
@@ -58,8 +59,16 @@ pub async fn get_kpi_overview(
     let sessions: i64 = row.get("sessions");
     let orders: i64 = row.get("orders");
     let revenue: f64 = row.get("revenue");
-    let aov = if orders > 0 { revenue / (orders as f64) } else { 0.0 };
-    let conv = if sessions > 0 { (orders as f64) / (sessions as f64) } else { 0.0 };
+    let aov = if orders > 0 {
+        revenue / (orders as f64)
+    } else {
+        0.0
+    };
+    let conv = if sessions > 0 {
+        (orders as f64) / (sessions as f64)
+    } else {
+        0.0
+    };
     Ok(KpiOverview {
         visits,
         sessions,
@@ -421,86 +430,213 @@ fn validate_granularity(g: &str) -> AppResult<&'static str> {
     }
 }
 
+fn validate_comparison_count(granularity: &str, count: i32) -> AppResult<()> {
+    let maximum = match granularity {
+        "week" => 52,
+        "month" => 24,
+        "year" => 5,
+        _ => return Err(AppError::Message("invalid comparison granularity".into())),
+    };
+
+    if (1..=maximum).contains(&count) {
+        Ok(())
+    } else {
+        Err(AppError::Message(format!(
+            "comparison count must be between 1 and {maximum} for {granularity}"
+        )))
+    }
+}
+
+const COMPARISON_SOURCE_TYPES_SQL: &str = r#"
+    WITH RECURSIVE source_values(source_type) AS (
+        (
+            SELECT source_type
+            FROM analytics_sessions
+            WHERE source_type IS NOT NULL
+            ORDER BY source_type
+            LIMIT 1
+        )
+
+        UNION ALL
+
+        SELECT (
+            SELECT sessions.source_type
+            FROM analytics_sessions sessions
+            WHERE sessions.source_type > source_values.source_type
+              AND sessions.source_type IS NOT NULL
+            ORDER BY sessions.source_type
+            LIMIT 1
+        )
+        FROM source_values
+        WHERE source_values.source_type IS NOT NULL
+    )
+    SELECT source_type
+    FROM source_values
+    WHERE source_type IS NOT NULL
+    ORDER BY source_type;
+"#;
+
+fn comparison_visits_sql(granularity: &str) -> String {
+    format!(
+        r#"
+        WITH bounds AS MATERIALIZED (
+            SELECT
+                date_trunc('{granularity}', NOW() - make_interval({granularity}s => ($1 - 1)::int)) AS start_at,
+                date_trunc('{granularity}', NOW()) + interval '1 {granularity}' AS end_at
+        ),
+        periods AS (
+            SELECT generate_series(
+                (SELECT start_at FROM bounds),
+                (SELECT end_at FROM bounds) - interval '1 {granularity}',
+                interval '1 {granularity}'
+            ) AS period_start
+        ),
+        visit_rollups AS (
+            SELECT
+                date_trunc('{granularity}', page_views.occurred_at::timestamptz) AS period_start,
+                COUNT(*)::bigint AS visits
+            FROM analytics_page_views page_views
+            CROSS JOIN bounds
+            WHERE page_views.received_at >= bounds.start_at - interval '48 hours'
+              AND page_views.received_at < bounds.end_at + interval '48 hours'
+              AND page_views.occurred_at >= bounds.start_at
+              AND page_views.occurred_at < bounds.end_at
+            GROUP BY 1
+        )
+        SELECT periods.period_start,
+               COALESCE(visit_rollups.visits, 0)::bigint AS visits
+        FROM periods
+        LEFT JOIN visit_rollups USING (period_start)
+        ORDER BY periods.period_start;
+        "#
+    )
+}
+
+fn comparison_sessions_sql(granularity: &str) -> String {
+    format!(
+        r#"
+        WITH bounds AS MATERIALIZED (
+            SELECT
+                date_trunc('{granularity}', NOW() - make_interval({granularity}s => ($1 - 1)::int)) AS start_at,
+                date_trunc('{granularity}', NOW()) + interval '1 {granularity}' AS end_at
+        )
+        SELECT
+            date_trunc('{granularity}', sessions.occurred_at::timestamptz) AS period_start,
+            COUNT(DISTINCT sessions.session_id)::bigint AS sessions
+        FROM analytics_sessions sessions
+        CROSS JOIN bounds
+        WHERE sessions.session_id IS NOT NULL
+          AND (sessions.source_type = ANY($2::text[]) OR sessions.source_type IS NULL)
+          AND sessions.session_registered_at >=
+              ((bounds.start_at - interval '5 minutes') AT TIME ZONE 'UTC')
+          AND sessions.session_registered_at <
+              ((bounds.end_at + interval '5 minutes') AT TIME ZONE 'UTC')
+          AND sessions.occurred_at >= bounds.start_at
+          AND sessions.occurred_at < bounds.end_at
+        GROUP BY 1;
+        "#
+    )
+}
+
+fn comparison_orders_sql(granularity: &str) -> String {
+    format!(
+        r#"
+        WITH bounds AS MATERIALIZED (
+            SELECT
+                date_trunc('{granularity}', NOW() - make_interval({granularity}s => ($1 - 1)::int)) AS start_at,
+                date_trunc('{granularity}', NOW()) + interval '1 {granularity}' AS end_at
+        )
+        SELECT
+                date_trunc('{granularity}', orders.created_at::timestamptz) AS period_start,
+                COUNT(*)::bigint AS orders,
+                COALESCE(SUM(orders.total_price), 0)::float8 AS revenue
+        FROM orders
+        CROSS JOIN bounds
+        WHERE orders.created_at >= bounds.start_at
+          AND orders.created_at < bounds.end_at
+          AND orders.deleted_at IS NULL
+        GROUP BY 1;
+        "#
+    )
+}
+
 #[tauri::command]
 pub async fn get_period_comparison(
     state: State<'_, ConnectionState>,
     args: ComparisonArgs,
 ) -> AppResult<Vec<PeriodMetrics>> {
-    let client = state.client().await?;
     // `g` is allowlisted, so interpolating it into date_trunc / interval is
     // safe — Postgres won't accept a bind parameter there anyway.
     let g = validate_granularity(&args.granularity)?;
-    let sql = format!(
-        "
-        WITH bounds AS (
-            SELECT
-                date_trunc('{g}', NOW() - make_interval({g}s => ($1 - 1)::int)) AS start_at,
-                date_trunc('{g}', NOW()) + interval '1 {g}' AS end_at
-        ),
-        periods AS (
-            SELECT generate_series(
-                (SELECT start_at FROM bounds),
-                (SELECT end_at FROM bounds) - interval '1 {g}',
-                interval '1 {g}'
-            ) AS period_start
-        ),
-        v AS (
-            SELECT date_trunc('{g}', occurred_at) AS p, COUNT(*)::bigint AS c
-            FROM analytics_page_views
-            WHERE occurred_at >= (SELECT start_at FROM bounds)
-            GROUP BY 1
-        ),
-        s AS (
-            SELECT date_trunc('{g}', occurred_at) AS p,
-                   COUNT(DISTINCT session_id)::bigint AS c
-            FROM analytics_sessions
-            WHERE occurred_at >= (SELECT start_at FROM bounds)
-            GROUP BY 1
-        ),
-        o AS (
-            SELECT date_trunc('{g}', created_at) AS p,
-                   COUNT(*)::bigint AS orders,
-                   COALESCE(SUM(total_price), 0)::float8 AS revenue
-            FROM orders
-            WHERE created_at >= (SELECT start_at FROM bounds)
-              AND deleted_at IS NULL
-            GROUP BY 1
-        )
-        SELECT
-            p.period_start,
-            COALESCE(v.c, 0) AS visits,
-            COALESCE(s.c, 0) AS sessions,
-            COALESCE(o.orders, 0) AS orders,
-            COALESCE(o.revenue, 0) AS revenue
-        FROM periods p
-        LEFT JOIN v ON v.p = p.period_start
-        LEFT JOIN s ON s.p = p.period_start
-        LEFT JOIN o ON o.p = p.period_start
-        ORDER BY p.period_start;
-        "
-    );
-    let rows = client.query(&sql, &[&args.count]).await?;
+    validate_comparison_count(g, args.count)?;
+    let visits_sql = comparison_visits_sql(g);
+    let sessions_sql = comparison_sessions_sql(g);
+    let orders_sql = comparison_orders_sql(g);
 
-    Ok(rows
+    let (visits_client, sessions_client, orders_client) =
+        tokio::try_join!(state.client(), state.client(), state.client())?;
+
+    let visits_future =
+        async { Ok::<_, AppError>(visits_client.query(&visits_sql, &[&args.count]).await?) };
+    let sessions_future = async {
+        let source_rows = sessions_client
+            .query(COMPARISON_SOURCE_TYPES_SQL, &[])
+            .await?;
+        let source_types: Vec<String> = source_rows
+            .into_iter()
+            .map(|row| row.try_get("source_type"))
+            .collect::<Result<_, tokio_postgres::Error>>()?;
+        Ok::<_, AppError>(
+            sessions_client
+                .query(&sessions_sql, &[&args.count, &source_types])
+                .await?,
+        )
+    };
+    let orders_future =
+        async { Ok::<_, AppError>(orders_client.query(&orders_sql, &[&args.count]).await?) };
+
+    let (visit_rows, session_rows, order_rows) =
+        tokio::try_join!(visits_future, sessions_future, orders_future)?;
+
+    let sessions_by_period: HashMap<DateTime<Utc>, i64> = session_rows
         .into_iter()
-        .map(|r| {
-            let period_start: DateTime<Utc> = r.get("period_start");
+        .map(|row| Ok((row.try_get("period_start")?, row.try_get("sessions")?)))
+        .collect::<Result<_, tokio_postgres::Error>>()?;
+    let orders_by_period: HashMap<DateTime<Utc>, (i64, f64)> = order_rows
+        .into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get("period_start")?,
+                (row.try_get("orders")?, row.try_get("revenue")?),
+            ))
+        })
+        .collect::<Result<_, tokio_postgres::Error>>()?;
+
+    visit_rows
+        .into_iter()
+        .map(|row| {
+            let period_start: DateTime<Utc> = row.try_get("period_start")?;
             let label = match g {
                 "week" => format!("W{}", period_start.format("%G-%V")),
                 "month" => period_start.format("%b %Y").to_string(),
                 "year" => period_start.format("%Y").to_string(),
                 _ => period_start.to_rfc3339(),
             };
-            PeriodMetrics {
+            let (orders, revenue) = orders_by_period
+                .get(&period_start)
+                .copied()
+                .unwrap_or((0, 0.0));
+
+            Ok(PeriodMetrics {
                 period_start,
                 label,
-                visits: r.get("visits"),
-                sessions: r.get("sessions"),
-                orders: r.get("orders"),
-                revenue: r.get("revenue"),
-            }
+                visits: row.try_get("visits")?,
+                sessions: sessions_by_period.get(&period_start).copied().unwrap_or(0),
+                orders,
+                revenue,
+            })
         })
-        .collect())
+        .collect()
 }
 
 // ───────────────────────── Campaigns & Referrers ─────────────────────────
@@ -515,81 +651,76 @@ pub struct CampaignRow {
     pub revenue: f64,
 }
 
+const CAMPAIGNS_SQL: &str = r#"
+    WITH session_campaign_counts AS MATERIALIZED (
+        SELECT
+            session_id,
+            utm_campaign AS campaign,
+            COUNT(*)::bigint AS page_views
+        FROM analytics_page_views
+        WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours')
+                              AND ($2::timestamptz + interval '48 hours')
+          AND occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
+          AND utm_campaign IS NOT NULL
+          AND utm_campaign != ''
+        GROUP BY session_id, utm_campaign
+    ),
+    session_campaigns AS MATERIALIZED (
+        SELECT session_id, MIN(campaign) AS campaign
+        FROM session_campaign_counts
+        GROUP BY session_id
+    ),
+    campaign_pv AS (
+        SELECT campaign, SUM(page_views)::bigint AS page_views
+        FROM session_campaign_counts
+        GROUP BY 1
+    ),
+    campaign_sessions AS (
+        SELECT campaign, COUNT(*)::bigint AS sessions
+        FROM session_campaigns
+        GROUP BY 1
+    ),
+    campaign_basket AS (
+        SELECT session_campaigns.campaign, COUNT(*)::bigint AS baskets
+        FROM session_campaigns
+        JOIN analytics_basket basket
+          ON basket.session_id = session_campaigns.session_id
+         AND basket.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
+        GROUP BY 1
+    ),
+    campaign_orders AS (
+        SELECT
+            session_campaigns.campaign,
+            COUNT(*)::bigint AS orders,
+            COALESCE(SUM(orders.total_price), 0)::float8 AS revenue
+        FROM session_campaigns
+        JOIN orders
+          ON orders.session_id = session_campaigns.session_id
+         AND orders.created_at BETWEEN $1::timestamptz AND $2::timestamptz
+         AND orders.deleted_at IS NULL
+        GROUP BY 1
+    )
+    SELECT
+        campaign_pv.campaign,
+        campaign_pv.page_views,
+        COALESCE(campaign_sessions.sessions, 0) AS sessions,
+        COALESCE(campaign_basket.baskets, 0) AS baskets,
+        COALESCE(campaign_orders.orders, 0) AS orders,
+        COALESCE(campaign_orders.revenue, 0) AS revenue
+    FROM campaign_pv
+    LEFT JOIN campaign_sessions USING (campaign)
+    LEFT JOIN campaign_basket USING (campaign)
+    LEFT JOIN campaign_orders USING (campaign)
+    ORDER BY sessions DESC;
+"#;
+
 #[tauri::command]
 pub async fn get_campaigns_report(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<CampaignRow>> {
     let client = state.client().await?;
-    let sql = "
-        WITH session_campaigns AS (
-            SELECT 
-                session_id,
-                MIN(utm_campaign) AS campaign
-            FROM analytics_page_views
-            WHERE occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
-              AND utm_campaign IS NOT NULL AND utm_campaign != ''
-            GROUP BY session_id
-        ),
-        campaign_pv AS (
-            SELECT 
-                utm_campaign AS campaign,
-                COUNT(*)::bigint AS page_views
-            FROM analytics_page_views
-            WHERE occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
-              AND utm_campaign IS NOT NULL AND utm_campaign != ''
-            GROUP BY 1
-        ),
-        campaign_sessions AS (
-            SELECT 
-                campaign,
-                COUNT(*)::bigint AS sessions
-            FROM session_campaigns
-            GROUP BY 1
-        ),
-        campaign_basket AS (
-            SELECT 
-                sc.campaign,
-                COUNT(*)::bigint AS baskets
-            FROM analytics_basket ab
-            JOIN session_campaigns sc ON ab.session_id = sc.session_id
-            WHERE ab.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
-            GROUP BY 1
-        ),
-        campaign_orders AS (
-            SELECT 
-                sc.campaign,
-                COUNT(*)::bigint AS orders,
-                COALESCE(SUM(o.total_price), 0)::float8 AS revenue
-            FROM orders o
-            JOIN session_campaigns sc ON o.session_id = sc.session_id
-            WHERE o.created_at BETWEEN $1::timestamptz AND $2::timestamptz
-              AND o.deleted_at IS NULL
-            GROUP BY 1
-        )
-        SELECT 
-            c.campaign,
-            COALESCE(pv.page_views, 0) AS page_views,
-            COALESCE(s.sessions, 0) AS sessions,
-            COALESCE(b.baskets, 0) AS baskets,
-            COALESCE(o.orders, 0) AS orders,
-            COALESCE(o.revenue, 0) AS revenue
-        FROM (
-            SELECT campaign FROM campaign_pv
-            UNION
-            SELECT campaign FROM campaign_sessions
-            UNION
-            SELECT campaign FROM campaign_basket
-            UNION
-            SELECT campaign FROM campaign_orders
-        ) c
-        LEFT JOIN campaign_pv pv ON pv.campaign = c.campaign
-        LEFT JOIN campaign_sessions s ON s.campaign = c.campaign
-        LEFT JOIN campaign_basket b ON b.campaign = c.campaign
-        LEFT JOIN campaign_orders o ON o.campaign = c.campaign
-        ORDER BY sessions DESC;
-    ";
-    let rows = client.query(sql, &params(&args)).await?;
+    let rows = client.query(CAMPAIGNS_SQL, &params(&args)).await?;
     Ok(rows
         .into_iter()
         .map(|r| CampaignRow {
@@ -630,7 +761,9 @@ pub async fn get_referrers_report(
             COUNT(*)::bigint AS page_views,
             COUNT(DISTINCT session_id)::bigint AS sessions
         FROM analytics_page_views
-        WHERE occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
+        WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours')
+                              AND ($2::timestamptz + interval '48 hours')
+          AND occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
         GROUP BY 1
         ORDER BY page_views DESC, sessions DESC
         LIMIT 50;
@@ -646,3 +779,129 @@ pub async fn get_referrers_report(
         .collect())
 }
 
+#[cfg(test)]
+mod report_sql_tests {
+    use super::{validate_comparison_count, CAMPAIGNS_SQL};
+
+    #[test]
+    fn report_sql_comparison_splits_minimal_indexed_aggregates() {
+        let source = include_str!("analytics.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        let start = production.find("fn comparison_visits_sql").unwrap_or(0);
+        let end = production
+            .find("// ───────────────────────── Campaigns & Referrers")
+            .expect("campaign section");
+        let comparison = &production[start..end];
+
+        assert!(comparison.contains("fn comparison_visits_sql"));
+        assert!(comparison.contains("fn comparison_sessions_sql"));
+        assert!(comparison.contains("fn comparison_orders_sql"));
+        assert!(comparison.contains("tokio::try_join!"));
+
+        let visits_start = comparison
+            .find("fn comparison_visits_sql")
+            .expect("visits SQL");
+        let sessions_start = comparison
+            .find("fn comparison_sessions_sql")
+            .expect("sessions SQL");
+        let visits = &comparison[visits_start..sessions_start];
+        assert!(visits.contains("FROM analytics_page_views"));
+        assert!(visits.contains("COUNT(*)::bigint AS visits"));
+        assert!(visits.contains("received_at"));
+        assert!(!visits.contains("session_id"));
+        assert!(!visits.contains("DISTINCT"));
+
+        let orders_start = comparison
+            .find("fn comparison_orders_sql")
+            .expect("orders SQL");
+        let sessions = &comparison[sessions_start..orders_start];
+        assert!(sessions.contains("FROM analytics_sessions"));
+        assert!(sessions.contains("session_registered_at"));
+        assert!(sessions.contains("sessions.session_id IS NOT NULL"));
+        assert!(sessions.contains("COUNT(DISTINCT sessions.session_id)::bigint AS sessions"));
+        assert!(!sessions.contains("analytics_page_views"));
+    }
+
+    #[test]
+    fn comparison_rejects_ranges_larger_than_the_ui_can_request() {
+        let production = include_str!("analytics.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+
+        assert!(production.contains("fn validate_comparison_count"));
+        assert!(production.contains("validate_comparison_count(g, args.count)?"));
+        assert!(validate_comparison_count("week", 52).is_ok());
+        assert!(validate_comparison_count("month", 24).is_ok());
+        assert!(validate_comparison_count("year", 5).is_ok());
+        assert!(validate_comparison_count("week", 0).is_err());
+        assert!(validate_comparison_count("week", 53).is_err());
+        assert!(validate_comparison_count("month", 25).is_err());
+        assert!(validate_comparison_count("year", 6).is_err());
+    }
+
+    #[test]
+    fn comparison_periods_are_timestamptz_and_decode_without_panics() {
+        let production = include_str!("analytics.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+
+        assert!(production.contains("page_views.occurred_at::timestamptz"));
+        assert!(production.contains("sessions.occurred_at::timestamptz"));
+        assert!(production.contains("orders.created_at::timestamptz"));
+        assert!(production.contains("row.try_get(\"period_start\")"));
+        assert!(!production.contains("row.get(\"period_start\")"));
+    }
+
+    #[test]
+    fn report_sql_campaigns_scans_the_page_view_range_once() {
+        let sql = CAMPAIGNS_SQL;
+
+        assert!(
+            sql.contains("session_campaign_counts AS MATERIALIZED"),
+            "page views must aggregate before any reusable set is materialized"
+        );
+        assert!(
+            sql.contains("received_at BETWEEN"),
+            "campaign page views need an indexed candidate range"
+        );
+        assert_eq!(sql.matches("FROM analytics_page_views").count(), 1);
+        assert!(
+            sql.contains("GROUP BY session_id, utm_campaign"),
+            "the raw scan must collapse rows to the minimal session/campaign shape"
+        );
+        assert!(
+            sql.contains("SUM(page_views)::bigint AS page_views"),
+            "campaign totals must reuse the compact page-view counts"
+        );
+        assert!(
+            !sql.contains("campaign_page_views AS MATERIALIZED"),
+            "materializing every matching page view causes large temporary writes"
+        );
+    }
+
+    #[test]
+    fn report_sql_referrers_uses_the_page_view_time_index() {
+        let source = include_str!("analytics.rs");
+        let start = source
+            .find("pub async fn get_referrers_report")
+            .expect("referrers command");
+        let sql = source[start..]
+            .split("#[cfg(test)]")
+            .next()
+            .expect("referrers production source");
+
+        assert!(
+            sql.contains("received_at BETWEEN ($1::timestamptz - interval '48 hours')"),
+            "referrers must use the existing received_at index"
+        );
+        assert!(
+            sql.contains("occurred_at BETWEEN $1::timestamptz AND $2::timestamptz"),
+            "occurred_at must remain the authoritative range"
+        );
+    }
+}

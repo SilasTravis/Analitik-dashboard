@@ -186,7 +186,6 @@ pub async fn get_dashboard_commerce(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<DashboardCommerce> {
-    let _dashboard_guard = state.dashboard_query_guard().await;
     let client = state.client().await?;
     client.batch_execute(SET_STATEMENT_TIMEOUT_SQL).await?;
 
@@ -290,23 +289,20 @@ mod tests {
     }
 
     #[test]
-    fn commerce_command_acquires_dashboard_guard_before_client_and_timeout() {
+    fn commerce_command_uses_an_exclusive_client_lease_without_global_serialization() {
         let source = include_str!("dashboard_commerce.rs");
         let production = source
             .split("#[cfg(test)]")
             .next()
             .expect("production source should precede tests");
-        let guard = production
-            .find("state.dashboard_query_guard().await")
-            .expect("commerce command must acquire the shared dashboard guard");
+        assert!(!production.contains("dashboard_query_guard"));
         let client = production
             .find("state.client().await")
-            .expect("commerce command must obtain the database client");
+            .expect("commerce command must obtain an exclusive client lease");
         let timeout = production
             .find("client.batch_execute(SET_STATEMENT_TIMEOUT_SQL).await")
             .expect("commerce command must set its timeout");
 
-        assert!(guard < client);
         assert!(client < timeout);
     }
 }

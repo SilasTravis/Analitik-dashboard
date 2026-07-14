@@ -14,6 +14,12 @@ pub struct PerfArgs {
     pub device: Option<String>,
 }
 
+// Exact view counts still use every bounded row. Only the expensive ordered
+// p75 aggregates use this stable 2% sample (roughly 1/50th of the sort input).
+const PERFORMANCE_SAMPLE_SQL: &str = "hashtextextended(\
+    COALESCE(pv.page_view_id::text, pv.session_id::text, pv.occurred_at::text), 0\
+) % 50 = 0";
+
 /// SQL fragment restricting page views to a device segment.
 ///
 /// A `session_id` can have several rows in `analytics_sessions`, and `is_mobile`
@@ -31,15 +37,150 @@ pub struct PerfArgs {
 fn device_filter(device: &Option<String>) -> &'static str {
     match device.as_deref() {
         Some("mobile") => {
-            " AND session_id IN (SELECT session_id FROM analytics_sessions \
-              GROUP BY session_id HAVING bool_or(is_mobile))"
+            " AND EXISTS (\
+                SELECT 1 FROM analytics_sessions device_session \
+                WHERE device_session.session_id = pv.session_id \
+                  AND device_session.is_mobile IS TRUE \
+                OFFSET 0\
+              )"
         }
         Some("desktop") => {
-            " AND session_id IN (SELECT session_id FROM analytics_sessions \
-              GROUP BY session_id HAVING NOT COALESCE(bool_or(is_mobile), FALSE))"
+            " AND EXISTS (\
+                SELECT 1 FROM analytics_sessions known_session \
+                WHERE known_session.session_id = pv.session_id \
+                OFFSET 0\
+              ) \
+              AND NOT EXISTS (\
+                SELECT 1 FROM analytics_sessions mobile_session \
+                WHERE mobile_session.session_id = pv.session_id \
+                  AND mobile_session.is_mobile IS TRUE \
+                OFFSET 0\
+              )"
         }
         _ => "",
     }
+}
+
+fn performance_overview_sql(device: &Option<String>) -> String {
+    format!(
+        r#"
+        SELECT
+            COUNT(*)::bigint AS total_views,
+            COUNT(lcp)::bigint AS measured_views,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY ttfb)
+                FILTER (WHERE percentile_sample))::float8 AS ttfb_p75,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY fcp)
+                FILTER (WHERE percentile_sample))::float8 AS fcp_p75,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY lcp)
+                FILTER (WHERE percentile_sample))::float8 AS lcp_p75,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY cls)
+                FILTER (WHERE percentile_sample))::float8 AS cls_p75,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY fid)
+                FILTER (WHERE percentile_sample))::float8 AS fid_p75,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY dom_complete)
+                FILTER (WHERE percentile_sample))::float8 AS dom_complete_p75,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY full_load)
+                FILTER (WHERE percentile_sample))::float8 AS full_load_p75
+        FROM (
+            SELECT
+                pv.ttfb,
+                pv.fcp,
+                pv.lcp,
+                pv.cls,
+                pv.fid,
+                pv.dom_complete,
+                pv.full_load,
+                {sample} AS percentile_sample
+            FROM analytics_page_views pv
+            WHERE pv.received_at BETWEEN ($1::timestamptz - interval '48 hours')
+                                     AND ($2::timestamptz + interval '48 hours')
+              AND pv.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz{filter}
+        ) bounded_views;
+        "#,
+        filter = device_filter(device),
+        sample = PERFORMANCE_SAMPLE_SQL
+    )
+}
+
+fn performance_trend_sql(device: &Option<String>) -> String {
+    format!(
+        r#"
+        WITH days AS (
+            SELECT generate_series(
+                date_trunc('day', $1::timestamptz),
+                date_trunc('day', $2::timestamptz),
+                interval '1 day'
+            )::date AS day
+        ),
+        p AS (
+            SELECT
+                date_trunc('day', occurred_at)::date AS day,
+                (percentile_cont(0.75) WITHIN GROUP (ORDER BY lcp)
+                    FILTER (WHERE percentile_sample))::float8 AS lcp_p75,
+                (percentile_cont(0.75) WITHIN GROUP (ORDER BY fcp)
+                    FILTER (WHERE percentile_sample))::float8 AS fcp_p75,
+                (percentile_cont(0.75) WITHIN GROUP (ORDER BY full_load)
+                    FILTER (WHERE percentile_sample))::float8 AS full_load_p75
+            FROM (
+                SELECT
+                    pv.occurred_at,
+                    pv.lcp,
+                    pv.fcp,
+                    pv.full_load,
+                    {sample} AS percentile_sample
+                FROM analytics_page_views pv
+                WHERE pv.received_at BETWEEN ($1::timestamptz - interval '48 hours')
+                                         AND ($2::timestamptz + interval '48 hours')
+                  AND pv.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz{filter}
+            ) bounded_views
+            GROUP BY 1
+        )
+        SELECT d.day, p.lcp_p75, p.fcp_p75, p.full_load_p75
+        FROM days d
+        LEFT JOIN p USING (day)
+        ORDER BY d.day;
+        "#,
+        filter = device_filter(device),
+        sample = PERFORMANCE_SAMPLE_SQL
+    )
+}
+
+fn page_performance_sql(device: &Option<String>) -> String {
+    format!(
+        r#"
+        SELECT
+            page_type,
+            COUNT(*)::bigint AS views_count,
+            COUNT(lcp)::bigint AS measured_views,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY lcp)
+                FILTER (WHERE percentile_sample))::float8 AS lcp_p75,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY cls)
+                FILTER (WHERE percentile_sample))::float8 AS cls_p75,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY fid)
+                FILTER (WHERE percentile_sample))::float8 AS fid_p75,
+            (percentile_cont(0.75) WITHIN GROUP (ORDER BY full_load)
+                FILTER (WHERE percentile_sample))::float8 AS full_load_p75
+        FROM (
+            SELECT
+                CASE WHEN pv.page_type IS NULL OR pv.page_type = ''
+                     THEN 'other' ELSE pv.page_type END AS page_type,
+                pv.lcp,
+                pv.cls,
+                pv.fid,
+                pv.full_load,
+                {sample} AS percentile_sample
+            FROM analytics_page_views pv
+            WHERE pv.received_at BETWEEN ($1::timestamptz - interval '48 hours')
+                                     AND ($2::timestamptz + interval '48 hours')
+              AND pv.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz{filter}
+        ) bounded_views
+        GROUP BY 1
+        ORDER BY views_count DESC
+        LIMIT 20;
+        "#,
+        filter = device_filter(device),
+        sample = PERFORMANCE_SAMPLE_SQL
+    )
 }
 
 // ───────────────────────── Overview (p75) ─────────────────────────
@@ -67,23 +208,7 @@ pub async fn get_performance_overview(
     args: PerfArgs,
 ) -> AppResult<PerformanceOverview> {
     let client = state.client().await?;
-    let sql = format!(
-        "
-        SELECT
-            COUNT(*)::bigint AS total_views,
-            COUNT(lcp)::bigint AS measured_views,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY ttfb))::float8         AS ttfb_p75,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY fcp))::float8          AS fcp_p75,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY lcp))::float8          AS lcp_p75,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY cls))::float8          AS cls_p75,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY fid))::float8          AS fid_p75,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY dom_complete))::float8 AS dom_complete_p75,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY full_load))::float8    AS full_load_p75
-        FROM analytics_page_views
-        WHERE occurred_at BETWEEN $1::timestamptz AND $2::timestamptz{filter};
-    ",
-        filter = device_filter(&args.device)
-    );
+    let sql = performance_overview_sql(&args.device);
     let row = client.query_one(&sql, &[&args.from, &args.to]).await?;
     Ok(PerformanceOverview {
         total_views: row.get("total_views"),
@@ -114,32 +239,7 @@ pub async fn get_performance_trend(
     args: PerfArgs,
 ) -> AppResult<Vec<PerformanceTrendPoint>> {
     let client = state.client().await?;
-    let sql = format!(
-        "
-        WITH days AS (
-            SELECT generate_series(
-                date_trunc('day', $1::timestamptz),
-                date_trunc('day', $2::timestamptz),
-                interval '1 day'
-            )::date AS day
-        ),
-        p AS (
-            SELECT
-                date_trunc('day', occurred_at)::date AS day,
-                (percentile_cont(0.75) WITHIN GROUP (ORDER BY lcp))::float8       AS lcp_p75,
-                (percentile_cont(0.75) WITHIN GROUP (ORDER BY fcp))::float8       AS fcp_p75,
-                (percentile_cont(0.75) WITHIN GROUP (ORDER BY full_load))::float8 AS full_load_p75
-            FROM analytics_page_views
-            WHERE occurred_at BETWEEN $1::timestamptz AND $2::timestamptz{filter}
-            GROUP BY 1
-        )
-        SELECT d.day, p.lcp_p75, p.fcp_p75, p.full_load_p75
-        FROM days d
-        LEFT JOIN p USING (day)
-        ORDER BY d.day;
-    ",
-        filter = device_filter(&args.device)
-    );
+    let sql = performance_trend_sql(&args.device);
     let rows = client.query(&sql, &[&args.from, &args.to]).await?;
     Ok(rows
         .into_iter()
@@ -171,24 +271,7 @@ pub async fn get_page_performance(
     args: PerfArgs,
 ) -> AppResult<Vec<PagePerformanceRow>> {
     let client = state.client().await?;
-    let sql = format!(
-        "
-        SELECT
-            CASE WHEN page_type IS NULL OR page_type = '' THEN 'other' ELSE page_type END AS page_type,
-            COUNT(*)::bigint AS views_count,
-            COUNT(lcp)::bigint AS measured_views,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY lcp))::float8       AS lcp_p75,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY cls))::float8       AS cls_p75,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY fid))::float8       AS fid_p75,
-            (percentile_cont(0.75) WITHIN GROUP (ORDER BY full_load))::float8 AS full_load_p75
-        FROM analytics_page_views
-        WHERE occurred_at BETWEEN $1::timestamptz AND $2::timestamptz{filter}
-        GROUP BY 1
-        ORDER BY views_count DESC
-        LIMIT 20;
-    ",
-        filter = device_filter(&args.device)
-    );
+    let sql = page_performance_sql(&args.device);
     let rows = client.query(&sql, &[&args.from, &args.to]).await?;
     Ok(rows
         .into_iter()
@@ -202,4 +285,68 @@ pub async fn get_page_performance(
             full_load_p75: r.get("full_load_p75"),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod report_sql_tests {
+    use super::{
+        device_filter, page_performance_sql, performance_overview_sql, performance_trend_sql,
+    };
+
+    fn assert_indexed_page_view_candidates(sql: &str) {
+        assert!(
+            sql.contains("received_at BETWEEN"),
+            "performance needs the page-view received_at index"
+        );
+        assert!(
+            sql.contains("interval '48 hours'"),
+            "page-view candidate margin is missing"
+        );
+        assert!(
+            sql.contains("occurred_at BETWEEN"),
+            "event time must remain authoritative"
+        );
+    }
+
+    fn assert_lightweight_percentiles(sql: &str, percentile_count: usize) {
+        assert!(
+            sql.contains("hashtextextended(") && sql.contains("% 50 = 0 AS percentile_sample"),
+            "p75 calculations need a deterministic two-percent sample"
+        );
+        assert_eq!(
+            sql.matches("FILTER (WHERE percentile_sample)").count(),
+            percentile_count,
+            "every percentile sort must use only the compact sample"
+        );
+        assert!(
+            sql.contains("COUNT(*)::bigint") || sql.contains("WITH days AS"),
+            "exact count and empty-day behavior must remain unchanged"
+        );
+    }
+
+    #[test]
+    fn report_sql_performance_queries_bound_page_view_candidates() {
+        assert_indexed_page_view_candidates(&performance_overview_sql(&None));
+        assert_indexed_page_view_candidates(&performance_trend_sql(&None));
+        assert_indexed_page_view_candidates(&page_performance_sql(&None));
+    }
+
+    #[test]
+    fn report_sql_percentile_sorts_use_small_deterministic_samples() {
+        assert_lightweight_percentiles(&performance_overview_sql(&None), 7);
+        assert_lightweight_percentiles(&performance_trend_sql(&None), 3);
+        assert_lightweight_percentiles(&page_performance_sql(&None), 4);
+    }
+
+    #[test]
+    fn report_sql_device_filters_use_session_id_index_probes() {
+        let mobile = device_filter(&Some("mobile".into()));
+        let desktop = device_filter(&Some("desktop".into()));
+
+        assert!(mobile.contains("EXISTS"));
+        assert!(desktop.contains("EXISTS"));
+        assert!(desktop.contains("NOT EXISTS"));
+        assert!(!mobile.contains("GROUP BY"));
+        assert!(!desktop.contains("GROUP BY"));
+    }
 }

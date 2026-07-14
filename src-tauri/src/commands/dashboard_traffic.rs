@@ -106,7 +106,6 @@ pub async fn get_dashboard_traffic(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<DashboardTraffic> {
-    let _dashboard_guard = state.dashboard_query_guard().await;
     let client = state.client().await?;
     client.batch_execute(SET_STATEMENT_TIMEOUT_SQL).await?;
 
@@ -135,6 +134,27 @@ mod tests {
         assert!(sql.contains(
             "WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours') AND ($2::timestamptz + interval '48 hours')"
         ));
+    }
+
+    #[test]
+    fn dashboard_traffic_uses_an_exclusive_client_lease_without_global_serialization() {
+        let production = include_str!("dashboard_traffic.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        let command = production
+            .split("pub async fn get_dashboard_traffic")
+            .nth(1)
+            .expect("dashboard traffic command");
+
+        assert!(!command.contains("dashboard_query_guard"));
+        let client = command
+            .find("state.client().await")
+            .expect("exclusive client lease must be acquired");
+        let timeout = command
+            .find("client.batch_execute(SET_STATEMENT_TIMEOUT_SQL)")
+            .expect("statement timeout must be set");
+        assert!(client < timeout);
     }
 
     #[test]

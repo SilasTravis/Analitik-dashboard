@@ -35,7 +35,6 @@ pub async fn get_dashboard_geo(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<GeoRow>> {
-    let _dashboard_guard = state.dashboard_query_guard().await;
     let client = state.client().await?;
     client.batch_execute(SET_STATEMENT_TIMEOUT_SQL).await?;
 
@@ -116,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_geo_acquires_guard_before_setting_timeout() {
+    fn dashboard_geo_uses_an_exclusive_client_lease_without_global_serialization() {
         let production = include_str!("dashboard_geo.rs")
             .split("#[cfg(test)]")
             .next()
@@ -125,13 +124,14 @@ mod tests {
             .split("pub async fn get_dashboard_geo")
             .nth(1)
             .unwrap();
-        let guard = command
-            .find("state.dashboard_query_guard().await")
-            .expect("dashboard guard must be acquired");
+        assert!(!command.contains("dashboard_query_guard"));
+        let client = command
+            .find("state.client().await")
+            .expect("exclusive client lease must be acquired");
         let timeout = command
             .find("client.batch_execute(SET_STATEMENT_TIMEOUT_SQL)")
             .expect("statement timeout must be set");
 
-        assert!(guard < timeout);
+        assert!(client < timeout);
     }
 }

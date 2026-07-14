@@ -194,7 +194,6 @@ pub async fn get_dashboard_sessions(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<DashboardSessions> {
-    let _dashboard_guard = state.dashboard_query_guard().await;
     let client = state.client().await?;
     client.batch_execute(SET_STATEMENT_TIMEOUT_SQL).await?;
 
@@ -298,7 +297,7 @@ mod dashboard_sessions_tests {
     }
 
     #[test]
-    fn dashboard_sessions_acquires_the_dashboard_guard_before_setting_timeout() {
+    fn dashboard_sessions_uses_an_exclusive_client_lease_without_global_serialization() {
         let implementation = include_str!("dashboard_sessions.rs")
             .split("#[cfg(test)]")
             .next()
@@ -307,14 +306,15 @@ mod dashboard_sessions_tests {
             .split("pub async fn get_dashboard_sessions")
             .nth(1)
             .unwrap();
-        let guard = command
-            .find("state.dashboard_query_guard().await")
-            .expect("dashboard guard must be acquired");
+        assert!(!command.contains("dashboard_query_guard"));
+        let client = command
+            .find("state.client().await")
+            .expect("exclusive client lease must be acquired");
         let set_timeout = command
             .find("client.batch_execute(SET_STATEMENT_TIMEOUT_SQL)")
             .expect("statement timeout must be set");
 
-        assert!(guard < set_timeout);
+        assert!(client < set_timeout);
     }
 
     #[test]

@@ -30,12 +30,25 @@ pub struct ConvArgs {
 fn device_clause(device: &Option<String>, col: &str) -> String {
     match device.as_deref() {
         Some("mobile") => format!(
-            " AND {col} IN (SELECT session_id FROM analytics_sessions \
-             GROUP BY session_id HAVING bool_or(is_mobile))"
+            " AND EXISTS (\
+                SELECT 1 FROM analytics_sessions device_session \
+                WHERE device_session.session_id = {col} \
+                  AND device_session.is_mobile IS TRUE \
+                OFFSET 0\
+              )"
         ),
         Some("desktop") => format!(
-            " AND {col} IN (SELECT session_id FROM analytics_sessions \
-             GROUP BY session_id HAVING NOT COALESCE(bool_or(is_mobile), FALSE))"
+            " AND EXISTS (\
+                SELECT 1 FROM analytics_sessions known_session \
+                WHERE known_session.session_id = {col} \
+                OFFSET 0\
+              ) \
+              AND NOT EXISTS (\
+                SELECT 1 FROM analytics_sessions device_session \
+                WHERE device_session.session_id = {col} \
+                  AND device_session.is_mobile IS TRUE \
+                OFFSET 0\
+              )"
         ),
         _ => String::new(),
     }
@@ -92,61 +105,78 @@ pub struct ConversionFunnel {
     pub order_completed: i64,
 }
 
+fn conversion_funnel_sql(device: &Option<String>) -> String {
+    format!(
+        r#"
+        WITH sampled_session_ids AS MATERIALIZED (
+            SELECT sampled.session_id
+            FROM analytics_sessions AS sampled
+                TABLESAMPLE SYSTEM (2) REPEATABLE (20260714)
+            WHERE sampled.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
+              AND sampled.session_id IS NOT NULL
+            GROUP BY sampled.session_id
+        ),
+        sess AS MATERIALIZED (
+            SELECT sampled_session_ids.session_id
+            FROM sampled_session_ids
+            WHERE TRUE{device}
+        ),
+        viewed_sessions AS (
+            SELECT sess.session_id
+            FROM sess
+            WHERE EXISTS (
+                SELECT 1
+                FROM analytics_page_views product_view
+                WHERE product_view.session_id = sess.session_id
+                  AND product_view.received_at BETWEEN
+                      ($1::timestamptz - interval '48 hours') AND
+                      ($2::timestamptz + interval '48 hours')
+                  AND product_view.occurred_at BETWEEN
+                      $1::timestamptz AND $2::timestamptz
+                  AND product_view.page_type = 'product_view'
+                OFFSET 0
+            )
+        ),
+        basket_sessions AS (
+            SELECT sess.session_id
+            FROM sess
+            WHERE EXISTS (
+                SELECT 1
+                FROM analytics_basket basket
+                WHERE basket.session_id = sess.session_id
+                  AND basket.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
+                  AND basket.action = 'BASKET_ACTION_ADD'
+                OFFSET 0
+            )
+        ),
+        order_sessions AS (
+            SELECT
+                orders.session_id,
+                bool_or(orders.status = ANY($3::text[])) AS is_completed
+            FROM orders
+            JOIN sess ON sess.session_id = orders.session_id
+            WHERE orders.created_at BETWEEN $1::timestamptz AND $2::timestamptz
+              AND orders.deleted_at IS NULL
+            GROUP BY orders.session_id
+        )
+        SELECT
+            (SELECT COUNT(*) FROM sess)::bigint * 50 AS sessions,
+            (SELECT COUNT(*) FROM viewed_sessions)::bigint * 50 AS viewed_product,
+            (SELECT COUNT(*) FROM basket_sessions)::bigint * 50 AS added_basket,
+            (SELECT COUNT(*) FROM order_sessions)::bigint * 50 AS order_placed,
+            (SELECT COUNT(*) FROM order_sessions WHERE is_completed)::bigint * 50 AS order_completed;
+        "#,
+        device = device_clause(device, "sampled_session_ids.session_id")
+    )
+}
+
 #[tauri::command]
 pub async fn get_conversion_funnel(
     state: State<'_, ConnectionState>,
     args: ConvArgs,
 ) -> AppResult<ConversionFunnel> {
     let client = state.client().await?;
-    // Device clause is applied to the session universe (`sess`); every later
-    // stage is constrained to `sess`, so the segment propagates for free.
-    let sql = format!(
-        "
-        WITH sess AS (
-            SELECT DISTINCT session_id
-            FROM analytics_sessions
-            WHERE occurred_at BETWEEN $1::timestamptz AND $2::timestamptz{device}
-        ),
-        viewed AS (
-            SELECT DISTINCT pv.session_id
-            FROM analytics_page_views pv
-            WHERE pv.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
-              AND pv.page_type = 'product_view'
-              AND pv.session_id IN (SELECT session_id FROM sess)
-        ),
-        basket AS (
-            SELECT DISTINCT b.session_id
-            FROM analytics_basket b
-            WHERE b.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
-              AND b.action = 'BASKET_ACTION_ADD'
-              AND b.session_id IN (SELECT session_id FROM sess)
-        ),
-        placed AS (
-            SELECT DISTINCT o.session_id
-            FROM orders o
-            WHERE o.created_at BETWEEN $1::timestamptz AND $2::timestamptz
-              AND o.deleted_at IS NULL
-              AND o.session_id IS NOT NULL
-              AND o.session_id IN (SELECT session_id FROM sess)
-        ),
-        completed AS (
-            SELECT DISTINCT o.session_id
-            FROM orders o
-            WHERE o.created_at BETWEEN $1::timestamptz AND $2::timestamptz
-              AND o.deleted_at IS NULL
-              AND o.session_id IS NOT NULL
-              AND o.status = ANY($3::text[])
-              AND o.session_id IN (SELECT session_id FROM sess)
-        )
-        SELECT
-            (SELECT COUNT(*) FROM sess)::bigint      AS sessions,
-            (SELECT COUNT(*) FROM viewed)::bigint     AS viewed_product,
-            (SELECT COUNT(*) FROM basket)::bigint      AS added_basket,
-            (SELECT COUNT(*) FROM placed)::bigint       AS order_placed,
-            (SELECT COUNT(*) FROM completed)::bigint     AS order_completed;
-    ",
-        device = device_clause(&args.device, "session_id")
-    );
+    let sql = conversion_funnel_sql(&args.device);
     let params: [&(dyn ToSql + Sync); 3] = [&args.from, &args.to, &args.statuses];
     let row = client.query_one(&sql, &params).await?;
     Ok(ConversionFunnel {
@@ -182,56 +212,87 @@ pub struct ConversionKpis {
     pub attributed_pct: f64,
 }
 
+fn conversion_kpis_sql(device: &Option<String>) -> String {
+    format!(
+        r#"
+        WITH sampled_session_ids AS MATERIALIZED (
+            SELECT sampled.session_id
+            FROM analytics_sessions AS sampled
+                TABLESAMPLE SYSTEM (2) REPEATABLE (20260714)
+            WHERE sampled.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
+              AND sampled.session_id IS NOT NULL
+            GROUP BY sampled.session_id
+        ),
+        sess AS MATERIALIZED (
+            SELECT sampled_session_ids.session_id
+            FROM sampled_session_ids
+            WHERE TRUE{device}
+        ),
+        basket_sessions AS (
+            SELECT sess.session_id
+            FROM sess
+            WHERE EXISTS (
+                SELECT 1
+                FROM analytics_basket basket
+                WHERE basket.session_id = sess.session_id
+                  AND basket.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
+                  AND basket.action = 'BASKET_ACTION_ADD'
+                OFFSET 0
+            )
+        ),
+        orders_in_range AS MATERIALIZED (
+            SELECT
+                o.session_id,
+                o.total_price,
+                (o.status = ANY($3::text[])) AS is_completed
+            FROM orders o
+            WHERE o.created_at BETWEEN $1::timestamptz AND $2::timestamptz
+              AND o.deleted_at IS NULL{o_device}
+        ),
+        order_totals AS (
+            SELECT
+                COUNT(*) FILTER (WHERE session_id IS NOT NULL)::bigint AS attributed_orders,
+                COUNT(*)::bigint AS total_orders,
+                COUNT(*)::bigint AS orders_placed,
+                COUNT(*) FILTER (WHERE is_completed)::bigint AS orders_completed,
+                COALESCE(SUM(total_price), 0)::float8 AS revenue_placed,
+                COALESCE(SUM(total_price) FILTER (WHERE is_completed), 0)::float8 AS revenue_completed
+            FROM orders_in_range
+        ),
+        session_order_totals AS (
+            SELECT
+                COUNT(DISTINCT orders_in_range.session_id)::bigint AS ordering_sessions,
+                COUNT(DISTINCT orders_in_range.session_id)
+                    FILTER (WHERE orders_in_range.is_completed)::bigint AS completed_sessions
+            FROM orders_in_range
+            JOIN sess ON sess.session_id = orders_in_range.session_id
+        )
+        SELECT
+            (SELECT COUNT(*) FROM sess)::bigint * 50 AS sessions,
+            (SELECT COUNT(*) FROM basket_sessions)::bigint * 50 AS basket_sessions,
+            session_order_totals.ordering_sessions * 50 AS ordering_sessions,
+            session_order_totals.completed_sessions * 50 AS completed_sessions,
+            order_totals.orders_placed,
+            order_totals.orders_completed,
+            order_totals.revenue_placed,
+            order_totals.revenue_completed,
+            order_totals.attributed_orders,
+            order_totals.total_orders
+        FROM order_totals
+        CROSS JOIN session_order_totals;
+        "#,
+        device = device_clause(device, "sampled_session_ids.session_id"),
+        o_device = device_clause(device, "o.session_id")
+    )
+}
+
 #[tauri::command]
 pub async fn get_conversion_kpis(
     state: State<'_, ConnectionState>,
     args: ConvArgs,
 ) -> AppResult<ConversionKpis> {
     let client = state.client().await?;
-    let device = device_clause(&args.device, "session_id");
-    // `o_device` filters orders by the device class of their session. NULL
-    // session orders drop out of a device segment (and out of attribution).
-    let o_device = device_clause(&args.device, "o.session_id");
-    let sql = format!(
-        "
-        WITH sess AS (
-            SELECT DISTINCT session_id
-            FROM analytics_sessions
-            WHERE occurred_at BETWEEN $1::timestamptz AND $2::timestamptz{device}
-        ),
-        basket_sess AS (
-            SELECT DISTINCT session_id
-            FROM analytics_basket
-            WHERE occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
-              AND action = 'BASKET_ACTION_ADD'
-              AND session_id IN (SELECT session_id FROM sess)
-        ),
-        ord AS (
-            SELECT o.session_id,
-                   o.total_price,
-                   (o.status = ANY($3::text[])) AS is_completed
-            FROM orders o
-            WHERE o.created_at BETWEEN $1::timestamptz AND $2::timestamptz
-              AND o.deleted_at IS NULL{o_device}
-        )
-        SELECT
-            (SELECT COUNT(*) FROM sess)::bigint                                  AS sessions,
-            (SELECT COUNT(*) FROM basket_sess)::bigint                            AS basket_sessions,
-            COUNT(*) FILTER (WHERE session_id IS NOT NULL)::bigint                 AS attributed_orders,
-            COUNT(*)::bigint                                                        AS total_orders,
-            COUNT(*)::bigint                                                         AS orders_placed,
-            COUNT(*) FILTER (WHERE is_completed)::bigint                              AS orders_completed,
-            COALESCE(SUM(total_price), 0)::float8                                      AS revenue_placed,
-            COALESCE(SUM(total_price) FILTER (WHERE is_completed), 0)::float8           AS revenue_completed,
-            COUNT(DISTINCT session_id) FILTER (
-                WHERE session_id IN (SELECT session_id FROM sess))::bigint              AS ordering_sessions,
-            COUNT(DISTINCT session_id) FILTER (
-                WHERE is_completed AND session_id IN (SELECT session_id FROM sess))::bigint AS completed_sessions
-        FROM ord;
-    ",
-        device = device,
-        o_device = o_device
-    );
+    let sql = conversion_kpis_sql(&args.device);
     let params: [&(dyn ToSql + Sync); 3] = [&args.from, &args.to, &args.statuses];
     let row = client.query_one(&sql, &params).await?;
 
@@ -286,4 +347,94 @@ pub async fn get_conversion_kpis(
         revenue_per_session,
         attributed_pct,
     })
+}
+
+#[cfg(test)]
+mod report_sql_tests {
+    const SOURCE: &str = include_str!("conversion.rs");
+
+    fn section(start: &str, end: &str) -> &'static str {
+        let start = SOURCE.find(start).expect("SQL builder start");
+        let rest = &SOURCE[start..];
+        let end = rest.find(end).expect("SQL builder end");
+        &rest[..end]
+    }
+
+    fn assert_fast_sampled_session_range(sql: &str) {
+        assert!(
+            sql.contains("analytics_sessions AS sampled")
+                && sql.contains("TABLESAMPLE SYSTEM (2)")
+                && sql.contains("REPEATABLE (20260714)"),
+            "conversion must read only a stable two-percent session sample"
+        );
+        assert!(
+            sql.contains("sampled.occurred_at BETWEEN $1::timestamptz AND $2::timestamptz"),
+            "event time must remain the authoritative range"
+        );
+        assert!(
+            sql.contains("sampled_session_ids AS MATERIALIZED"),
+            "only sampled distinct session IDs may be reused"
+        );
+        assert!(
+            !sql.contains("FROM analytics_page_views pv")
+                && !sql.contains("page_view_sessions AS MATERIALIZED")
+                && !sql.contains("session_activity AS MATERIALIZED"),
+            "conversion must not group the complete page-view range"
+        );
+    }
+
+    #[test]
+    fn report_sql_device_filters_use_session_id_index_probes() {
+        let sql = section(
+            "fn device_clause",
+            "// ───────────────────────── Order statuses",
+        );
+
+        assert!(sql.contains("EXISTS") && sql.contains("NOT EXISTS"));
+        assert!(sql.contains("device_session.session_id = {col}"));
+        assert!(!sql.contains("GROUP BY session_id"));
+    }
+
+    #[test]
+    fn report_sql_funnel_aggregates_each_source_once() {
+        let sql = section(
+            "fn conversion_funnel_sql",
+            "pub async fn get_conversion_funnel",
+        );
+
+        assert_fast_sampled_session_range(sql);
+        assert!(sql.contains("FROM analytics_page_views product_view"));
+        assert!(sql.contains("product_view.session_id = sess.session_id"));
+        assert!(sql.contains("product_view.received_at BETWEEN"));
+        assert!(sql.contains("EXISTS (") && sql.contains("FROM analytics_basket basket"));
+        assert_eq!(sql.matches("FROM orders").count(), 1);
+        assert!(sql.matches("* 50").count() >= 5);
+        assert!(!sql.contains("IN (SELECT session_id FROM sess)"));
+    }
+
+    #[test]
+    fn report_sql_kpis_reuse_compact_sessions_and_orders() {
+        let sql = section("fn conversion_kpis_sql", "pub async fn get_conversion_kpis");
+
+        assert_fast_sampled_session_range(sql);
+        assert_eq!(sql.matches("FROM analytics_page_views").count(), 0);
+        assert!(sql.contains("orders_in_range AS MATERIALIZED"));
+        assert!(sql.contains("EXISTS (") && sql.contains("FROM analytics_basket basket"));
+        assert_eq!(sql.matches("FROM orders o").count(), 1);
+        assert!(sql.matches("* 50").count() >= 4);
+        assert!(!sql.contains("IN (SELECT session_id FROM sess)"));
+    }
+
+    #[test]
+    fn conversion_queries_wait_for_status_initialization() {
+        let funnel =
+            include_str!("../../../src/widgets/conversion-funnel/model/use-conversion-funnel.ts");
+        let kpis =
+            include_str!("../../../src/widgets/conversion-kpis/model/use-conversion-kpis.ts");
+
+        for hook in [funnel, kpis] {
+            assert!(hook.contains("const initialized = useConversionFilterStore"));
+            assert!(hook.contains("enabled: initialized"));
+        }
+    }
 }
