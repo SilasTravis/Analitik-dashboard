@@ -1,11 +1,20 @@
-import { useQuery } from "@tanstack/react-query";
-import { analyticsApi, analyticsKeys } from "@entities/analytics";
-import { useDateRangeStore } from "@entities/date-range";
+import { mergeKpi, useDashboardDomains } from "@entities/analytics";
 
 export function useKpi() {
-  const range = useDateRangeStore((s) => s.range);
-  return useQuery({
-    queryKey: analyticsKeys.kpi(range),
-    queryFn: () => analyticsApi.getKpiOverview(range),
-  });
+  const { commerce, traffic, sessions } = useDashboardDomains();
+  const data = commerce.data && traffic.data && sessions.data
+    ? mergeKpi(traffic.data, sessions.data, commerce.data)
+    : undefined;
+  const error = commerce.error ?? traffic.error ?? sessions.error;
+  return {
+    ...commerce,
+    data,
+    error,
+    isError: Boolean(error),
+    isSuccess: Boolean(data),
+    isLoading: commerce.isLoading || traffic.isLoading || sessions.isLoading,
+    isPending: commerce.isPending || traffic.isPending || sessions.isPending,
+    isFetching: commerce.isFetching || traffic.isFetching || sessions.isFetching,
+    status: error ? "error" as const : data ? "success" as const : "pending" as const,
+  };
 }

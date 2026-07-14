@@ -57,6 +57,35 @@ export type GeoRow = {
   visits: number;
 };
 
+export type DailyVisits = {
+  date: string;
+  visits: number;
+};
+
+export type DailySessions = {
+  date: string;
+  sessions: number;
+};
+
+export type DashboardTraffic = {
+  visits: number;
+  dailyVisits: DailyVisits[];
+};
+
+export type DashboardSessions = {
+  sessions: number;
+  dailySessions: DailySessions[];
+  devices: DeviceBucket[];
+};
+
+export type DashboardCommerce = {
+  orders: number;
+  revenue: number;
+  dailyRevenue: DailyRevenue[];
+  orderSources: SourceRow[];
+  topProducts: ProductRow[];
+};
+
 export type ComparisonArgs = {
   granularity: "week" | "month" | "year";
   count: number;

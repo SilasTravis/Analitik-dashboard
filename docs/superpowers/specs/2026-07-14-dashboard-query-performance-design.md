@@ -15,11 +15,15 @@ Reduce the first uncached home-dashboard response from minutes to seconds withou
 
 ## Selected Approach
 
-Replace seven independent home queries with three domain bundles. Each bundle scans its primary dataset once and returns independently, allowing its widgets to render while later bundles are still loading.
+Replace seven independent home queries with four independently cached requests: traffic core, geography, sessions, and commerce. Splitting geography prevents its grouping work, latency, or failure from delaying visits, daily traffic, and KPI rendering.
 
 ### Traffic bundle
 
-`get_dashboard_traffic` returns total visits, daily visits, and top geography. It uses the existing `received_at` index to select a bounded candidate set, then applies the exact requested `occurred_at` range. The candidate range extends 48 hours before and after the requested range. Current sampled production data showed a maximum observed page-view delivery delay of about 24 hours.
+`get_dashboard_traffic` returns total visits and daily visits. It uses the existing `received_at` index to select a bounded candidate set, then applies the exact requested `occurred_at` range. The candidate range extends 48 hours before and after the requested range.
+
+### Geography request
+
+`get_dashboard_geo` returns the top ten geography rows. It independently applies the same 48-hour `received_at` candidate bound and exact `occurred_at` predicate. Its separate cache isolates geography latency and failures from traffic-core consumers.
 
 ### Sessions bundle
 
@@ -35,7 +39,9 @@ Replace seven independent home queries with three domain bundles. Each bundle sc
 DashboardTraffic
   visits: number
   dailyVisits: DailyVisits[]
-  geo: GeoRow[]
+
+get_dashboard_geo
+  returns GeoRow[]
 
 DashboardSessions
   sessions: number
@@ -50,15 +56,15 @@ DashboardCommerce
   topProducts: ProductRow[]
 ```
 
-The frontend exposes three query keys and three API methods. Existing widget hooks keep their current public shapes:
+The frontend exposes four query keys and API methods. Existing widget hooks keep their current public shapes:
 
 - `useKpi` combines all three bundles and derives average order value and conversion rate.
 - `useDailyTraffic` combines `dailyVisits` and `dailySessions` by date.
 - Revenue, source, and product hooks select the commerce bundle.
 - Device selects the sessions bundle.
-- Geography selects the traffic bundle.
+- Geography uses its own query.
 
-TanStack Query deduplicates each domain request. Refresh invalidates all analytics keys, causing three requests rather than seven.
+TanStack Query deduplicates each request. Refresh invalidates all analytics keys, causing four requests rather than seven.
 
 ## Query Design
 
@@ -69,7 +75,7 @@ WHERE received_at BETWEEN ($1 - interval '48 hours') AND ($2 + interval '48 hour
   AND occurred_at BETWEEN $1 AND $2
 ```
 
-It derives total visits, daily visits, and top geography from that candidate set.
+The traffic-core query derives total and daily visits. The geography query intentionally repeats the bounded candidate selection but performs only the top-ten country/city aggregate.
 
 The session query dynamically discovers source values, applies the indexed `session_registered_at` candidate range, and makes the final inclusion decision with:
 
@@ -83,7 +89,7 @@ The commerce query materializes orders in the requested `created_at` range once,
 
 ## Progressive UI Behavior
 
-No component markup or styling changes. The commerce request is initiated first because it is currently the cheapest domain and unlocks three widgets. Traffic and sessions follow and unlock their own widgets. KPI and daily traffic appear when their required bundles are available.
+No component markup or styling changes. Commerce, traffic core, and sessions unlock the existing KPI and chart dependencies. Geography renders from its independent request and may complete later without delaying other traffic widgets.
 
 Existing widget spinners and errors remain in place. A failed bundle affects only widgets that consume that bundle; successful bundles remain visible and cached.
 
@@ -109,8 +115,9 @@ Implementation follows test-first development:
 
 - No database schema or data changes.
 - Every home widget displays the same metric meaning and UI as before.
-- The first domain renders within five seconds and all default seven-day bundles finish within 15 seconds in the current production environment.
-- One refresh produces three frontend analytics requests instead of seven.
+- The first request renders within five seconds and all four default seven-day requests finish within 15 seconds in the current production environment.
+- One refresh produces four frontend analytics requests instead of seven.
+- Splitting geography reduces traffic-core completion time without materially regressing total database work or all-request completion time.
 - All automated checks and the local UI smoke test pass.
 
 ## Known Boundary

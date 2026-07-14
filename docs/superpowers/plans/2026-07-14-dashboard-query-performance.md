@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement the independent backend bundles and review each bundle before integration. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace seven slow home-dashboard requests with three progressively rendered, independently cached domain bundles that preserve `occurred_at` filtering and the existing UI.
+**Goal:** Replace seven slow home-dashboard requests with four progressively rendered, independently cached requests that preserve `occurred_at` filtering and the existing UI.
 
-**Architecture:** Traffic, sessions, and commerce are separate Tauri commands and TanStack queries. Each command scans its main dataset once; existing widget hooks select or merge domain results while every widget UI component remains untouched.
+**Architecture:** Traffic core, geography, sessions, and commerce are separate Tauri commands and TanStack queries. Geography intentionally repeats the bounded page-view candidate lookup to isolate its aggregate from critical traffic metrics. Existing widget hooks select or merge results while every widget UI component remains untouched.
 
 **Tech Stack:** Rust, Tauri 2, tokio-postgres, chrono, serde, React 18, TypeScript, TanStack Query 5.
 
@@ -16,7 +16,7 @@
 - Keep `occurred_at` as the final page-view and session inclusion predicate.
 - Keep the existing five-minute TanStack Query cache behavior.
 - Preserve all existing metric definitions and response field naming.
-- The first domain must render within five seconds and all three seven-day bundles must finish within 15 seconds in the current production environment.
+- The first request must render within five seconds and all four seven-day requests must finish within 15 seconds in the current production environment.
 
 ---
 
@@ -27,11 +27,11 @@
 
 **Interfaces:**
 - Consumes: `RangeArgs` and `GeoRow` from `commands::analytics`, `ConnectionState`, and `AppResult`.
-- Produces: `DashboardTraffic { visits, daily_visits, geo }` and Tauri command `get_dashboard_traffic`.
+- Produces: `DashboardTraffic { visits, daily_visits }` and Tauri command `get_dashboard_traffic`.
 
 - [ ] Write failing tests asserting the query contains the 48-hour `received_at` candidate range, exact `occurred_at BETWEEN $1 AND $2`, and a KPI helper preserves zero and nonzero counts.
 - [ ] Run `cargo test dashboard_traffic --manifest-path src-tauri/Cargo.toml` and confirm RED because the constants/helpers are missing.
-- [ ] Implement a single materialized candidate CTE that returns tagged total, daily, and top-10 geography rows. Fill missing days with zero visits.
+- [ ] Implement a materialized candidate CTE that returns tagged total and daily rows. Fill missing days with zero visits.
 - [ ] Guarantee `statement_timeout = '15s'` is reset after success or failure.
 - [ ] Run focused tests, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, and report exact results. Do not edit shared module registration files and do not commit.
 
@@ -42,6 +42,18 @@ WHERE received_at BETWEEN ($1::timestamptz - interval '48 hours')
                       AND ($2::timestamptz + interval '48 hours')
   AND occurred_at BETWEEN $1::timestamptz AND $2::timestamptz
 ```
+
+---
+
+### Task 1b: Geography request
+
+**Files:**
+- Create: `src-tauri/src/commands/dashboard_geo.rs`
+
+- [ ] Write failing tests for the 48-hour indexed candidate bound, exact `occurred_at` predicate, legacy fallbacks, descending order, and top-10 limit.
+- [ ] Implement `get_dashboard_geo -> Vec<GeoRow>` with its own cacheable command.
+- [ ] Acquire the shared dashboard guard across `SET` / query / `RESET` and add reset/error tests.
+- [ ] Run focused tests and formatting checks. Do not edit shared registration files and do not commit.
 
 ---
 
@@ -110,14 +122,14 @@ WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
 - Modify: the seven home widget model hooks only.
 
 **Interfaces:**
-- Consumes: the three backend commands from Tasks 1-3.
-- Produces: three query keys/API methods/domain hooks and the unchanged public result shapes of all seven widget hooks.
+- Consumes: the four backend commands from Tasks 1-3.
+- Produces: four query keys/API methods/domain hooks and the unchanged public result shapes of all seven widget hooks.
 
 - [ ] Change `use-kpi.ts` first to import the wished-for domain hooks and run `npm run typecheck`; confirm RED due to missing exports.
-- [ ] Register the three Rust modules and commands.
+- [ ] Register the four Rust modules and commands.
 - [ ] Add TypeScript contracts `DashboardTraffic`, `DashboardSessions`, `DashboardCommerce`, `DailyVisits`, and `DailySessions` with camel-case collection fields matching Rust serialization.
-- [ ] Add `dashboardTraffic`, `dashboardSessions`, and `dashboardCommerce` query keys and API methods.
-- [ ] Implement three domain hooks. Initiate commerce first from `useKpi`, then traffic and sessions, so the cheapest domain is queued first on the existing single database connection.
+- [ ] Add `dashboardTraffic`, `dashboardGeo`, `dashboardSessions`, and `dashboardCommerce` query keys and API methods.
+- [ ] Implement four request hooks. Initiate commerce first from `useKpi`, then traffic and sessions; geography remains independent.
 - [ ] Implement pure merge helpers: KPI derives AOV and conversion; daily traffic merges dates with missing values as zero.
 - [ ] Migrate seven widget hooks without editing any widget UI component.
 - [ ] Run `npm run typecheck`, `npm run build`, Rust formatting, and all non-ignored Rust tests.
@@ -132,7 +144,7 @@ useDailyRevenue -> commerce
 useDevices -> sessions
 useTopProducts -> commerce
 useOrderSources -> commerce
-useGeoBreakdown -> traffic
+useGeoBreakdown -> geo
 ```
 
 ---
@@ -144,7 +156,7 @@ useGeoBreakdown -> traffic
 - Modify implementation files only when a failing regression test demonstrates a defect.
 
 - [ ] Confirm no UI-source diff from commit `790a8cc`.
-- [ ] Benchmark the three optimized commands read-only for the default seven-day range with saved credentials hidden from output.
+- [ ] Benchmark all four optimized commands individually and as one cold refresh for the default seven-day range with saved credentials hidden from output.
 - [ ] Compare every optimized total, daily bucket, device bucket, source bucket, product row, and geo row against the legacy queries. Count candidate-boundary exclusions explicitly.
 - [ ] Stop for a product decision if optimized values differ from legacy values because of rows outside approved margins.
 - [ ] Run `npm run typecheck`, `npm run build`, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, `cargo test --manifest-path src-tauri/Cargo.toml`, and `git diff --check`.

@@ -1,11 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
-import { analyticsApi, analyticsKeys } from "@entities/analytics";
-import { useDateRangeStore } from "@entities/date-range";
+import { useDashboardCommerce } from "@entities/analytics";
 
 export function useDailyRevenue() {
-  const range = useDateRangeStore((s) => s.range);
-  return useQuery({
-    queryKey: analyticsKeys.dailyRevenue(range),
-    queryFn: () => analyticsApi.getDailyRevenue(range),
-  });
+  const query = useDashboardCommerce();
+  return { ...query, data: query.data?.dailyRevenue };
 }

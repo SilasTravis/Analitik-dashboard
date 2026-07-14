@@ -24,9 +24,20 @@ import type {
   ConversionArgs,
   ConversionFunnel,
   ConversionKpis,
+  DashboardTraffic,
+  DashboardSessions,
+  DashboardCommerce,
 } from "../model/types";
 
 export const analyticsApi = {
+  getDashboardTraffic: (args: RangeArgs) =>
+    invoke<DashboardTraffic>("get_dashboard_traffic", { args }),
+  getDashboardGeo: (args: RangeArgs) =>
+    invoke<GeoRow[]>("get_dashboard_geo", { args }),
+  getDashboardSessions: (args: RangeArgs) =>
+    invoke<DashboardSessions>("get_dashboard_sessions", { args }),
+  getDashboardCommerce: (args: RangeArgs) =>
+    invoke<DashboardCommerce>("get_dashboard_commerce", { args }),
   getKpiOverview: (args: RangeArgs) =>
     invoke<KpiOverview>("get_kpi_overview", { args }),
   getDailyTraffic: (args: RangeArgs) =>

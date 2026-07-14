@@ -2,6 +2,10 @@ import type { ComparisonArgs, ConversionArgs, PerfArgs, RangeArgs } from "./type
 
 export const analyticsKeys = {
   all: ["analytics"] as const,
+  dashboardTraffic: (r: RangeArgs) => ["analytics", "dashboard-traffic", r.from, r.to] as const,
+  dashboardGeo: (r: RangeArgs) => ["analytics", "dashboard-geo", r.from, r.to] as const,
+  dashboardSessions: (r: RangeArgs) => ["analytics", "dashboard-sessions", r.from, r.to] as const,
+  dashboardCommerce: (r: RangeArgs) => ["analytics", "dashboard-commerce", r.from, r.to] as const,
   kpi: (r: RangeArgs) => ["analytics", "kpi", r.from, r.to] as const,
   dailyTraffic: (r: RangeArgs) => ["analytics", "daily-traffic", r.from, r.to] as const,
   dailyRevenue: (r: RangeArgs) => ["analytics", "daily-revenue", r.from, r.to] as const,
