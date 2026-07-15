@@ -114,7 +114,7 @@ pub async fn get_page_flow_map(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<PageFlowReport> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let rows = client.query(PAGE_FLOW_SQL, &[&args.from, &args.to]).await?;
 
     let mut links = Vec::new();
@@ -137,7 +137,7 @@ pub async fn get_page_engagement_report(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<PageEngagementRow>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let rows = client
         .query(PAGE_ENGAGEMENT_SQL, &[&args.from, &args.to])
         .await?;

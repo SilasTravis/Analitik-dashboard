@@ -14,6 +14,8 @@ pub enum AppError {
     NotConnected,
     #[error("no saved credentials")]
     NoCredentials,
+    #[error("analytics request was cancelled")]
+    Cancelled,
     #[error("{0}")]
     Message(String),
 }
@@ -48,6 +50,7 @@ impl Serialize for AppError {
             AppError::Serde(_) => "serde",
             AppError::NotConnected => "not_connected",
             AppError::NoCredentials => "no_credentials",
+            AppError::Cancelled => "cancelled",
             AppError::Message(_) => "message",
         };
         SerializedError {

@@ -186,7 +186,7 @@ pub async fn get_dashboard_commerce(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<DashboardCommerce> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     client.batch_execute(SET_STATEMENT_TIMEOUT_SQL).await?;
 
     let query_result = load_dashboard_commerce(client.as_ref(), &args).await;
@@ -297,7 +297,7 @@ mod tests {
             .expect("production source should precede tests");
         assert!(!production.contains("dashboard_query_guard"));
         let client = production
-            .find("state.client().await")
+            .find("state.analytics_client().await")
             .expect("commerce command must obtain an exclusive client lease");
         let timeout = production
             .find("client.batch_execute(SET_STATEMENT_TIMEOUT_SQL).await")

@@ -36,7 +36,7 @@ pub async fn get_kpi_overview(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<KpiOverview> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
 
     let sql = "
         WITH
@@ -93,7 +93,7 @@ pub async fn get_daily_traffic(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<DailyTraffic>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = "
         WITH days AS (
             SELECT generate_series(
@@ -146,7 +146,7 @@ pub async fn get_daily_revenue(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<DailyRevenue>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = "
         WITH days AS (
             SELECT generate_series(
@@ -193,7 +193,7 @@ pub async fn get_devices_overview(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<DeviceBucket>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = "
         SELECT
             CASE WHEN is_mobile THEN 'Mobile' ELSE 'Desktop' END AS device,
@@ -226,7 +226,7 @@ pub async fn get_browsers_overview(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<BrowserBucket>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = "
         SELECT COALESCE(NULLIF(browser, ''), 'Unknown') AS browser,
                COUNT(DISTINCT session_id)::bigint AS c
@@ -261,7 +261,7 @@ pub async fn get_top_products(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<ProductRow>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = "
         SELECT
             op.sap_code,
@@ -308,7 +308,7 @@ pub async fn get_order_sources(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<SourceRow>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = "
         SELECT COALESCE(NULLIF(order_source_type, ''), 'direct') AS source,
                COUNT(*)::bigint AS orders,
@@ -344,7 +344,7 @@ pub async fn get_utm_sources(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<UtmRow>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = "
         SELECT COALESCE(NULLIF(utm_source, ''), 'direct') AS source,
                COUNT(*)::bigint AS visits
@@ -378,7 +378,7 @@ pub async fn get_geo_breakdown(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<GeoRow>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = "
         SELECT
             COALESCE(NULLIF(viewer_country, ''), 'Unknown') AS country,
@@ -606,8 +606,11 @@ pub async fn get_period_comparison(
     let sessions_sql = comparison_sessions_sql(g);
     let orders_sql = comparison_orders_sql(g);
 
-    let (visits_client, sessions_client, orders_client) =
-        tokio::try_join!(state.client(), state.client(), state.client())?;
+    let (visits_client, sessions_client, orders_client) = tokio::try_join!(
+        state.analytics_client(),
+        state.analytics_client(),
+        state.analytics_client()
+    )?;
 
     let visits_future =
         async { Ok::<_, AppError>(visits_client.query(&visits_sql, &[&args.count]).await?) };
@@ -759,7 +762,7 @@ pub async fn get_campaigns_report(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<CampaignRow>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let rows = client.query(CAMPAIGNS_SQL, &params(&args)).await?;
     Ok(rows
         .into_iter()
@@ -787,7 +790,7 @@ pub async fn get_referrers_report(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<ReferrerRow>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = "
         SELECT 
             CASE 

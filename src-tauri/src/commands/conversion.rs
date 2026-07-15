@@ -69,7 +69,7 @@ pub async fn get_order_statuses(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<Vec<OrderStatusRow>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = "
         SELECT COALESCE(NULLIF(status, ''), 'unknown') AS status,
                COUNT(*)::bigint AS orders
@@ -175,7 +175,7 @@ pub async fn get_conversion_funnel(
     state: State<'_, ConnectionState>,
     args: ConvArgs,
 ) -> AppResult<ConversionFunnel> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = conversion_funnel_sql(&args.device);
     let params: [&(dyn ToSql + Sync); 3] = [&args.from, &args.to, &args.statuses];
     let row = client.query_one(&sql, &params).await?;
@@ -291,7 +291,7 @@ pub async fn get_conversion_kpis(
     state: State<'_, ConnectionState>,
     args: ConvArgs,
 ) -> AppResult<ConversionKpis> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = conversion_kpis_sql(&args.device);
     let params: [&(dyn ToSql + Sync); 3] = [&args.from, &args.to, &args.statuses];
     let row = client.query_one(&sql, &params).await?;

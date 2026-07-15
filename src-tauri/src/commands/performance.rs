@@ -207,7 +207,7 @@ pub async fn get_performance_overview(
     state: State<'_, ConnectionState>,
     args: PerfArgs,
 ) -> AppResult<PerformanceOverview> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = performance_overview_sql(&args.device);
     let row = client.query_one(&sql, &[&args.from, &args.to]).await?;
     Ok(PerformanceOverview {
@@ -238,7 +238,7 @@ pub async fn get_performance_trend(
     state: State<'_, ConnectionState>,
     args: PerfArgs,
 ) -> AppResult<Vec<PerformanceTrendPoint>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = performance_trend_sql(&args.device);
     let rows = client.query(&sql, &[&args.from, &args.to]).await?;
     Ok(rows
@@ -270,7 +270,7 @@ pub async fn get_page_performance(
     state: State<'_, ConnectionState>,
     args: PerfArgs,
 ) -> AppResult<Vec<PagePerformanceRow>> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     let sql = page_performance_sql(&args.device);
     let rows = client.query(&sql, &[&args.from, &args.to]).await?;
     Ok(rows

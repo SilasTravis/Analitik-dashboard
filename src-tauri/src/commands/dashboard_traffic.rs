@@ -106,7 +106,7 @@ pub async fn get_dashboard_traffic(
     state: State<'_, ConnectionState>,
     args: RangeArgs,
 ) -> AppResult<DashboardTraffic> {
-    let client = state.client().await?;
+    let client = state.analytics_client().await?;
     client.batch_execute(SET_STATEMENT_TIMEOUT_SQL).await?;
 
     let query_result = client.query(TRAFFIC_SQL, &[&args.from, &args.to]).await;
@@ -149,7 +149,7 @@ mod tests {
 
         assert!(!command.contains("dashboard_query_guard"));
         let client = command
-            .find("state.client().await")
+            .find("state.analytics_client().await")
             .expect("exclusive client lease must be acquired");
         let timeout = command
             .find("client.batch_execute(SET_STATEMENT_TIMEOUT_SQL)")

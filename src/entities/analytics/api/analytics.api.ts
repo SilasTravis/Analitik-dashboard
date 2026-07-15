@@ -30,6 +30,7 @@ import type {
 } from "../model/types";
 
 export const analyticsApi = {
+  cancelObsoleteQueries: () => invoke<void>("cancel_obsolete_analytics_queries"),
   getDashboardTraffic: (args: RangeArgs) =>
     invoke<DashboardTraffic>("get_dashboard_traffic", { args }),
   getDashboardGeo: (args: RangeArgs) =>

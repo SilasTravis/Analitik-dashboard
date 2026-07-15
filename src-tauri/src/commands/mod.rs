@@ -6,5 +6,6 @@ pub mod dashboard_commerce;
 pub mod dashboard_geo;
 pub mod dashboard_sessions;
 pub mod dashboard_traffic;
+pub mod navigation;
 pub mod performance;
 pub mod user_flow;
