@@ -43,7 +43,7 @@ ORDER BY source_type;
 "#;
 
 const GEO_HEATMAP_SQL: &str = r#"
-WITH normalized AS MATERIALIZED (
+WITH normalized AS (
     SELECT CASE
                WHEN geo[0] BETWEEN 55.9 AND 73.2 AND geo[1] BETWEEN 37.1 AND 45.7
                    THEN geo[0]
@@ -266,6 +266,7 @@ mod tests {
         assert!(sql.contains("latitude <= $6"));
         assert!(sql.contains("SELECT longitude, latitude, 1.0::double precision AS weight"));
         assert!(sql.contains("LIMIT 50001"));
+        assert!(!sql.contains("AS MATERIALIZED"));
         assert!(!sql.to_lowercase().contains("select session_id"));
     }
 
