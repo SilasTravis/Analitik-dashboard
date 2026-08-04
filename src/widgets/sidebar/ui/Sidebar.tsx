@@ -7,6 +7,7 @@ import FilterAltIcon from "@mui/icons-material/FilterAlt";
 import SpeedIcon from "@mui/icons-material/Speed";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SettingsIcon from "@mui/icons-material/Settings";
+import MapOutlinedIcon from "@mui/icons-material/MapOutlined";
 import { useQueryClient } from "@tanstack/react-query";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { MouseEvent } from "react";
@@ -22,6 +23,7 @@ const items = [
   { to: ROUTES.userFlow, label: "User Flow", icon: <AltRouteIcon fontSize="small" /> },
   { to: ROUTES.conversion, label: "Conversion", icon: <FilterAltIcon fontSize="small" /> },
   { to: ROUTES.performance, label: "Performance", icon: <SpeedIcon fontSize="small" /> },
+  { to: ROUTES.geo, label: "GEO", icon: <MapOutlinedIcon fontSize="small" /> },
   { to: ROUTES.aiScanner, label: "AI Scanner", icon: <AutoAwesomeIcon fontSize="small" /> },
   { to: ROUTES.settings, label: "Settings", icon: <SettingsIcon fontSize="small" /> },
 ];

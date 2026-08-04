@@ -32,7 +32,7 @@ test("expanded viewport adds a 25 percent cache buffer and clamps to Uzbekistan"
 });
 
 test("viewport containment detects whether cached overscan still covers the map", async () => {
-  const { containsBounds } = await loadTypeScriptModule(
+  const { containsBounds, selectRequestBounds } = await loadTypeScriptModule(
     "../src/widgets/geo-heatmap/model/viewport.ts",
   );
   const cached = { west: 67.5, south: 39.5, east: 70.5, north: 42.5 };
@@ -44,6 +44,24 @@ test("viewport containment detects whether cached overscan still covers the map"
   assert.equal(
     containsBounds(cached, { west: 67.4, south: 40, east: 70, north: 42 }),
     false,
+  );
+  assert.equal(
+    selectRequestBounds(cached, {
+      west: 68.2,
+      south: 40,
+      east: 70,
+      north: 42,
+    }),
+    null,
+  );
+  assert.deepEqual(
+    selectRequestBounds(cached, {
+      west: 67.4,
+      south: 40,
+      east: 69.4,
+      north: 42,
+    }),
+    { west: 66.9, south: 39.5, east: 69.9, north: 42.5 },
   );
 });
 

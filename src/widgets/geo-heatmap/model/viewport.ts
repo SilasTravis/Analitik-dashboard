@@ -67,6 +67,14 @@ export function containsBounds(container: GeoBounds, candidate: GeoBounds) {
   );
 }
 
+export function selectRequestBounds(
+  cached: GeoBounds | null,
+  visible: GeoBounds,
+): GeoBounds | null {
+  if (cached && containsBounds(cached, visible)) return null;
+  return expandBounds(visible);
+}
+
 export function quantizeBounds(bounds: GeoBounds): GeoBounds {
   return {
     west: clamp(

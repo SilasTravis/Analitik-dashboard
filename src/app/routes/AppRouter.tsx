@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { lazy, Suspense } from "react";
 import { ROUTES } from "@shared/config";
 import { LoginPage } from "@pages/login";
 import { DashboardPage } from "@pages/dashboard";
@@ -9,9 +10,14 @@ import { ConversionPage } from "@pages/conversion";
 import { PerformancePage } from "@pages/performance";
 import { AiScannerPage } from "@pages/ai-scanner";
 import { SettingsPage } from "@pages/settings";
+import { PageSpinner } from "@shared/ui/page-spinner";
 import { RequireAuth } from "./RequireAuth";
 // Force Vite HMR resolution
 import { RedirectIfAuth } from "./RedirectIfAuth";
+
+const GeoPage = lazy(() =>
+  import("@pages/geo").then((module) => ({ default: module.GeoPage })),
+);
 
 export function AppRouter() {
   return (
@@ -70,6 +76,16 @@ export function AppRouter() {
           element={
             <RequireAuth>
               <PerformancePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path={ROUTES.geo}
+          element={
+            <RequireAuth>
+              <Suspense fallback={<PageSpinner />}>
+                <GeoPage />
+              </Suspense>
             </RequireAuth>
           }
         />

@@ -6,6 +6,7 @@ export const ROUTES = {
   userFlow: "/user-flow",
   conversion: "/conversion",
   performance: "/performance",
+  geo: "/geo",
   aiScanner: "/ai-scanner",
   settings: "/settings",
 } as const;
