@@ -27,14 +27,19 @@ import type {
   DashboardTraffic,
   DashboardSessions,
   DashboardCommerce,
+  GeoHeatmapArgs,
+  GeoHeatmapResponse,
 } from "../model/types";
 
 export const analyticsApi = {
-  cancelObsoleteQueries: () => invoke<void>("cancel_obsolete_analytics_queries"),
+  cancelObsoleteQueries: () =>
+    invoke<void>("cancel_obsolete_analytics_queries"),
   getDashboardTraffic: (args: RangeArgs) =>
     invoke<DashboardTraffic>("get_dashboard_traffic", { args }),
   getDashboardGeo: (args: RangeArgs) =>
     invoke<GeoRow[]>("get_dashboard_geo", { args }),
+  getGeoHeatmap: (args: GeoHeatmapArgs) =>
+    invoke<GeoHeatmapResponse>("get_geo_heatmap", { args }),
   getDashboardSessions: (args: RangeArgs) =>
     invoke<DashboardSessions>("get_dashboard_sessions", { args }),
   getDashboardCommerce: (args: RangeArgs) =>

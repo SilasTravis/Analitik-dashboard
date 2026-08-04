@@ -30,12 +30,16 @@ export type {
   DashboardTraffic,
   DashboardSessions,
   DashboardCommerce,
+  GeoHeatmapArgs,
+  GeoHeatPoint,
+  GeoHeatmapResponse,
 } from "./model/types";
 export { analyticsKeys } from "./model/query-keys";
 export { analyticsApi } from "./api/analytics.api";
 export { METRICS } from "./model/metrics";
 export type { MetricKey, MetricFormat, MetricDef } from "./model/metrics";
 export { usePeriodComparison } from "./model/use-comparison";
+export { useGeoHeatmap } from "./model/use-geo-heatmap";
 export {
   useDashboardTraffic,
   useDashboardGeo,

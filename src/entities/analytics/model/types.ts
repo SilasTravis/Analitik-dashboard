@@ -57,6 +57,23 @@ export type GeoRow = {
   visits: number;
 };
 
+export type GeoHeatmapArgs = RangeArgs & {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+};
+
+export type GeoHeatPoint = [
+  longitude: number,
+  latitude: number,
+  weight: number,
+];
+
+export type GeoHeatmapResponse = {
+  points: GeoHeatPoint[];
+};
+
 export type DailyVisits = {
   date: string;
   visits: number;

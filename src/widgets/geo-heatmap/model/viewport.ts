@@ -109,3 +109,13 @@ export function geoHeatmapQueryKey(
     quantized.north,
   ] as const;
 }
+
+export function buildGeoHeatmapArgs(
+  range: { from: string; to: string },
+  bounds: GeoBounds,
+) {
+  return {
+    ...range,
+    ...quantizeBounds(bounds),
+  };
+}

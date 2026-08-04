@@ -66,6 +66,38 @@ test("quantized bounds make minor interactions share a stable query key", async 
   );
 });
 
+test("GEO request payload and analytics key use the compact Rust contract", async () => {
+  const { buildGeoHeatmapArgs } = await loadTypeScriptModule(
+    "../src/widgets/geo-heatmap/model/viewport.ts",
+  );
+  const { analyticsKeys } = await loadTypeScriptModule(
+    "../src/entities/analytics/model/query-keys.ts",
+  );
+  const args = buildGeoHeatmapArgs(
+    { from: "2026-08-01T00:00:00Z", to: "2026-08-04T23:59:59Z" },
+    { west: 67.51, south: 39.51, east: 70.49, north: 42.49 },
+  );
+
+  assert.deepEqual(args, {
+    from: "2026-08-01T00:00:00Z",
+    to: "2026-08-04T23:59:59Z",
+    west: 67.5,
+    south: 39.5,
+    east: 70.5,
+    north: 42.5,
+  });
+  assert.deepEqual(analyticsKeys.geoHeatmap(args), [
+    "analytics",
+    "geo-heatmap",
+    "2026-08-01T00:00:00Z",
+    "2026-08-04T23:59:59Z",
+    67.5,
+    39.5,
+    70.5,
+    42.5,
+  ]);
+});
+
 test("compact heat tuples reject invalid coordinates and weights", async () => {
   const { filterHeatPoints } = await loadTypeScriptModule(
     "../src/widgets/geo-heatmap/model/heat-style.ts",
