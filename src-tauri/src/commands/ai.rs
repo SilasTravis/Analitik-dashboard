@@ -41,9 +41,14 @@ pub async fn list_ai_models(provider: String, api_key: Option<String>) -> AppRes
         Some(k) if !k.trim().is_empty() => k,
         _ => ai_settings::require()?.api_key,
     };
-    match provider.as_str() {
-        "gemini" => ai::gemini::list_models(&key).await,
-        "openai" => ai::openai::list_models(&key).await,
+    list_models_for(&provider, &key).await
+}
+
+async fn list_models_for(provider: &str, api_key: &str) -> AppResult<Vec<String>> {
+    match provider {
+        "anthropic" => ai::anthropic::list_models(api_key).await,
+        "gemini" => ai::gemini::list_models(api_key).await,
+        "openai" => ai::openai::list_models(api_key).await,
         other => Err(AppError::Message(format!("unknown AI provider: {other}"))),
     }
 }
@@ -76,4 +81,18 @@ pub async fn ai_chat(
 pub async fn ai_reset_chat(ai_state: State<'_, AiState>) -> AppResult<()> {
     ai_state.reset().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_models_for;
+
+    #[tokio::test]
+    async fn model_list_routing_uses_the_anthropic_adapter() {
+        let error = list_models_for("anthropic", "")
+            .await
+            .expect_err("empty Anthropic key must fail before a request");
+
+        assert_eq!(error.to_string(), "Anthropic API key is not set");
+    }
 }

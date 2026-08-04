@@ -1,4 +1,4 @@
-export type AiProviderId = "gemini" | "openai";
+export type AiProviderId = "gemini" | "openai" | "anthropic";
 
 export type AiProviderInfo = {
   id: AiProviderId;
@@ -44,6 +44,19 @@ export const AI_PROVIDERS: AiProviderInfo[] = [
     ],
     keyUrl: "https://platform.openai.com/api-keys",
     keyHint: "OpenAI Platform",
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic Claude",
+    defaultModel: "claude-sonnet-5",
+    fallbackModels: [
+      "claude-sonnet-5",
+      "claude-opus-5",
+      "claude-opus-4-8",
+      "claude-haiku-4-5",
+    ],
+    keyUrl: "https://console.anthropic.com/settings/keys",
+    keyHint: "Anthropic Console",
   },
 ];
 

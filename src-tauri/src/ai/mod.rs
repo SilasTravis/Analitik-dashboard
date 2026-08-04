@@ -1,3 +1,4 @@
+pub mod anthropic;
 pub mod gemini;
 pub mod openai;
 pub mod schema;
@@ -93,6 +94,10 @@ pub trait AiProvider: Send + Sync {
 
 pub fn build_provider(settings: &AiSettings) -> AppResult<Box<dyn AiProvider>> {
     match settings.provider.as_str() {
+        "anthropic" => Ok(Box::new(anthropic::Anthropic::new(
+            settings.api_key.clone(),
+            settings.model.clone(),
+        ))),
         "gemini" => Ok(Box::new(gemini::Gemini::new(
             settings.api_key.clone(),
             settings.model.clone(),
@@ -413,5 +418,31 @@ fn build_user_message(intent: &str, question: Option<&str>) -> String {
             "discomfort" => "Find the main friction points in the user journey.".into(),
             _ => "Analyze the data.".into(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_provider;
+    use crate::security::ai_settings::AiSettings;
+
+    #[test]
+    fn provider_factory_accepts_anthropic_and_rejects_unknown_ids() {
+        let anthropic = AiSettings {
+            provider: "anthropic".into(),
+            api_key: "test-key".into(),
+            model: Some("claude-sonnet-5".into()),
+        };
+        assert!(build_provider(&anthropic).is_ok());
+
+        let invalid = AiSettings {
+            provider: "invalid".into(),
+            api_key: "test-key".into(),
+            model: None,
+        };
+        let error = build_provider(&invalid)
+            .err()
+            .expect("unknown provider must fail");
+        assert_eq!(error.to_string(), "unknown AI provider: invalid");
     }
 }
