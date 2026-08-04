@@ -23,6 +23,7 @@ pub fn run() {
             commands::dashboard_geo::get_dashboard_geo,
             commands::dashboard_sessions::get_dashboard_sessions,
             commands::dashboard_traffic::get_dashboard_traffic,
+            commands::geo_heatmap::get_geo_heatmap,
             commands::navigation::cancel_obsolete_analytics_queries,
             commands::analytics::get_kpi_overview,
             commands::analytics::get_daily_traffic,
