@@ -24,6 +24,7 @@ pub fn run() {
             commands::dashboard_sessions::get_dashboard_sessions,
             commands::dashboard_traffic::get_dashboard_traffic,
             commands::geo_heatmap::get_geo_heatmap,
+            commands::live_orders::get_live_order_stats,
             commands::navigation::cancel_obsolete_analytics_queries,
             commands::analytics::get_kpi_overview,
             commands::analytics::get_daily_traffic,
@@ -293,6 +294,99 @@ mod tests {
                 println!("  => should be monotonically non-increasing");
             }
             Err(e) => println!("  funnel query error: {e}"),
+        }
+        println!("=============================================================");
+    }
+
+    /// Confirms the vocabulary assumption baked into the Live Orders SQL
+    /// (`commands/live_orders.rs`): the distinct `orders.source` values
+    /// (order channel — NOT `order_source_type`, which is a different,
+    /// marketing-attribution column already used by the commerce dashboard),
+    /// and a sample hourly bucketing for today to eyeball against the raw
+    /// per-hour counts. Ignored by default (needs saved DB credentials); run
+    /// with:
+    ///   cargo test diag_live_orders_vocab -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn diag_live_orders_vocab() {
+        let creds = match crate::security::vault::load() {
+            Ok(c) => c,
+            Err(e) => {
+                println!("Failed to load credentials: {:?}", e);
+                return;
+            }
+        };
+        let (client, connection) =
+            creds.to_config().connect(tokio_postgres::NoTls).await.unwrap();
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("connection error: {}", e);
+            }
+        });
+
+        println!("============== LIVE ORDERS VOCAB DIAG (last 7d) ==============");
+
+        match client
+            .query(
+                "SELECT COALESCE(NULLIF(source, ''), '<null/empty>') AS label, \
+                 COUNT(*)::bigint AS c \
+                 FROM orders WHERE created_at >= NOW() - interval '7 days' \
+                 AND deleted_at IS NULL GROUP BY 1 ORDER BY c DESC",
+                &[],
+            )
+            .await
+        {
+            Ok(rows) => {
+                println!("---- orders.source (last 7d) ----");
+                for r in rows {
+                    let label: String = r.get("label");
+                    let c: i64 = r.get("c");
+                    println!("  {label:<28} {c}");
+                }
+            }
+            Err(e) => println!("  query error: {e}"),
+        }
+
+        println!("---- raw hourly counts for the last 24h (server-side date_trunc, for eyeballing) ----");
+        let raw_sql = "
+            SELECT date_trunc('hour', created_at) AS hour_start, COUNT(*)::bigint AS c
+            FROM orders
+            WHERE created_at >= NOW() - interval '24 hours'
+              AND deleted_at IS NULL
+            GROUP BY 1 ORDER BY 1";
+        match client.query(raw_sql, &[]).await {
+            Ok(rows) => {
+                for r in rows {
+                    let hour_start: chrono::NaiveDateTime = r.get("hour_start");
+                    let c: i64 = r.get("c");
+                    println!("  {hour_start} {c}");
+                }
+            }
+            Err(e) => println!("  query error: {e}"),
+        }
+
+        // Uzbekistan "today" — created_at is stored as naive UTC (see the
+        // module doc on `HOURLY_ORDERS_SQL`), so shift the current UTC
+        // instant by the fixed +5h offset before taking the calendar date,
+        // exactly mirroring what the production query does per-row.
+        let uzbekistan_today = (chrono::Utc::now() + chrono::Duration::hours(5)).date_naive();
+        println!("---- get_live_order_stats bucketing for {uzbekistan_today} (Uzbekistan time) ----");
+        match client
+            .query(crate::commands::live_orders::HOURLY_ORDERS_SQL, &[&uzbekistan_today])
+            .await
+        {
+            Ok(rows) => {
+                let mut total = 0i64;
+                for r in rows {
+                    let hour_index: i32 = r.get("hour_index");
+                    let source: String = r.get("source");
+                    let orders: i64 = r.get("orders");
+                    total += orders;
+                    println!("  hour={hour_index:<3} source={source:<20} orders={orders}");
+                }
+                println!("  => total orders today (Uzbekistan calendar day): {total}");
+            }
+            Err(e) => println!("  query error: {e}"),
         }
         println!("=============================================================");
     }

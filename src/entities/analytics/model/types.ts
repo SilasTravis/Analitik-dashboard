@@ -204,6 +204,27 @@ export type ConversionFunnel = {
   order_completed: number;
 };
 
+export type HourlyOrderPoint = {
+  /** 0-23, Uzbekistan wall-clock hour (server buckets by a fixed UTC+5). */
+  hour: number;
+  total: number;
+  bySource: Record<string, number>;
+};
+
+export type LiveOrderStats = {
+  totalOrders: number;
+  /** Distinct orders.source values seen, ordered by volume descending. */
+  sources: string[];
+  /** 24 entries, index 0 = 00:00 Uzbekistan time. */
+  hourly: HourlyOrderPoint[];
+};
+
+export type LiveOrderStatsArgs = {
+  /** Uzbekistan calendar day, `YYYY-MM-DD` — not a UTC instant. The backend
+   * converts `created_at` into Uzbekistan wall-clock time itself. */
+  day: string;
+};
+
 export type ConversionKpis = {
   sessions: number;
   basket_sessions: number;

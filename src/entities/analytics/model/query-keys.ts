@@ -2,6 +2,7 @@ import type {
   ComparisonArgs,
   ConversionArgs,
   GeoHeatmapArgs,
+  LiveOrderStatsArgs,
   PerfArgs,
   RangeArgs,
 } from "./types";
@@ -74,4 +75,6 @@ export const analyticsKeys = {
       a.device,
       a.statuses.join(","),
     ] as const,
+  liveOrderStats: (a: LiveOrderStatsArgs) =>
+    ["analytics", "live-order-stats", a.day] as const,
 };

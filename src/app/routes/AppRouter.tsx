@@ -7,6 +7,7 @@ import { ComparePage } from "@pages/compare";
 import { CampaignsPage } from "@pages/campaigns";
 import { UserFlowPage } from "@pages/user-flow";
 import { ConversionPage } from "@pages/conversion";
+import { LiveOrdersPage } from "@pages/live-orders";
 import { PerformancePage } from "@pages/performance";
 import { AiScannerPage } from "@pages/ai-scanner";
 import { SettingsPage } from "@pages/settings";
@@ -68,6 +69,14 @@ export function AppRouter() {
           element={
             <RequireAuth>
               <ConversionPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path={ROUTES.liveOrders}
+          element={
+            <RequireAuth>
+              <LiveOrdersPage />
             </RequireAuth>
           }
         />

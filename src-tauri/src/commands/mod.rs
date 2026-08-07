@@ -7,6 +7,7 @@ pub mod dashboard_geo;
 pub mod dashboard_sessions;
 pub mod dashboard_traffic;
 pub mod geo_heatmap;
+pub mod live_orders;
 pub mod navigation;
 pub mod performance;
 pub mod user_flow;

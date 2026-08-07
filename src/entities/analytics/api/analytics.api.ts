@@ -24,6 +24,8 @@ import type {
   ConversionArgs,
   ConversionFunnel,
   ConversionKpis,
+  LiveOrderStats,
+  LiveOrderStatsArgs,
   DashboardTraffic,
   DashboardSessions,
   DashboardCommerce,
@@ -84,4 +86,6 @@ export const analyticsApi = {
     invoke<ConversionFunnel>("get_conversion_funnel", { args }),
   getConversionKpis: (args: ConversionArgs) =>
     invoke<ConversionKpis>("get_conversion_kpis", { args }),
+  getLiveOrderStats: (args: LiveOrderStatsArgs) =>
+    invoke<LiveOrderStats>("get_live_order_stats", { args }),
 };

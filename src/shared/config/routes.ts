@@ -5,6 +5,7 @@ export const ROUTES = {
   campaigns: "/campaigns",
   userFlow: "/user-flow",
   conversion: "/conversion",
+  liveOrders: "/live-orders",
   performance: "/performance",
   geo: "/geo",
   aiScanner: "/ai-scanner",
